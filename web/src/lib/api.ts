@@ -24,9 +24,34 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  login: (email: string, password: string) =>
-    req<{ token: string; user: unknown }>("/api/v1/auth/login", {
-      method: "POST", body: JSON.stringify({ email, password }),
+  refresh: (refresh_token: string) =>
+    req<{ token: string; refresh_token: string }>("/api/v1/auth/refresh", { method: "POST", body: JSON.stringify({ refresh_token }) }),
+  forgot: (email: string) =>
+    req<{ ok: boolean; reset_token?: string; message: string }>("/api/v1/auth/forgot", { method: "POST", body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, password: string) =>
+    req("/api/v1/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
+  registry: (q = "") => req<{ id: string; name: string; slug: string; milestones: number; latest_milestone: string | null; languages: string[]; open_findings: number }[]>(`/api/v1/registry?q=${encodeURIComponent(q)}`),
+  setVisibility: (id: string, visibility: string) =>
+    req(`/api/v1/projects/${id}/visibility`, { method: "POST", body: JSON.stringify({ visibility }) }),
+  applyFix: (findingId: string) => req<{ milestone_id: string }>(`/api/v1/findings/${findingId}/apply-fix`, { method: "POST" }),
+  mfaSetup: () => req<{ secret: string; otpauth_uri: string }>("/api/v1/me/mfa/setup", { method: "POST" }),
+  mfaEnable: (code: string) => req("/api/v1/me/mfa/enable", { method: "POST", body: JSON.stringify({ code }) }),
+  mfaDisable: () => req("/api/v1/me/mfa/disable", { method: "POST" }),
+  myExport: async (): Promise<void> => {
+    const token = getToken();
+    const res = await fetch("/api/v1/me/export", { headers: { Authorization: token ? `Bearer ${token}` : "" } });
+    if (!res.ok) throw new Error("Export failed.");
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "vibeforge-export.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  deleteMe: (password: string) => req("/api/v1/me/delete", { method: "DELETE", body: JSON.stringify({ password }) }),
+  login: (email: string, password: string, totp_code?: string) =>
+    req<{ token: string; refresh_token: string; user: unknown }>("/api/v1/auth/login", {
+      method: "POST", body: JSON.stringify({ email, password, totp_code }),
     }),
   me: () => req<{ user: { id: string; email: string; display_name: string; is_platform_admin: boolean }; spaces: { id: string; name: string; slug: string; role: string }[] }>("/api/v1/me"),
   myProjects: () => req<{ id: string; space_id: string; slug: string; name: string; milestones: number }[]>("/api/v1/me/projects"),

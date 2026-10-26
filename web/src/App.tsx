@@ -29,7 +29,8 @@ type View =
   | { name: "space"; id: string; label: string }
   | { name: "project"; id: string; milestoneId?: string }
   | { name: "profile" }
-  | { name: "admin"; tab: string };
+  | { name: "admin"; tab: string }
+  | { name: "marketplace" };
 
 /** Shareable URLs: /spaces/:id  /projects/:id  /projects/:id/milestones/:mid  /profile  /admin/:tab */
 function parsePath(path: string): View {
@@ -41,6 +42,7 @@ function parsePath(path: string): View {
       : { name: "project", id: parts[1] };
   }
   if (parts[0] === "profile") return { name: "profile" };
+  if (parts[0] === "marketplace") return { name: "marketplace" };
   if (parts[0] === "admin") return { name: "admin", tab: parts[1] ?? "vulns" };
   return { name: "spaces" };
 }
@@ -50,6 +52,7 @@ function toPath(v: View): string {
     case "space": return `/spaces/${v.id}`;
     case "project": return v.milestoneId ? `/projects/${v.id}/milestones/${v.milestoneId}` : `/projects/${v.id}`;
     case "profile": return "/profile";
+    case "marketplace": return "/marketplace";
     case "admin": return `/admin/${v.tab}`;
     default: return "/";
   }
@@ -220,6 +223,8 @@ function Shell() {
               />
             )}
 
+            <div className="my-2 border-t border-border" />
+            <SideItem collapsed={collapsed} active={view.name === "marketplace"} label="Marketplace" icon="◇" onClick={() => setView({ name: "marketplace" })} />
             {perms.isAdmin && (
               <>
                 {!collapsed && <p className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Settings</p>}
@@ -290,6 +295,7 @@ function Shell() {
               {view.name === "project" && <ProjectDetail projectId={view.id} milestoneId={view.milestoneId} go={setView} />}
               {view.name === "profile" && <Profile />}
               {view.name === "admin" && <Admin initialTab={view.tab} />}
+              {view.name === "marketplace" && <Marketplace go={setView} />}
             </div>
           </main>
         </div>
@@ -376,19 +382,25 @@ function GlobalSearch({ go, spaces }: { go: (v: View) => void; spaces: Me["space
 function Login({ onDone }: { onDone: () => void }) {
   const [email, setEmail] = useState("admin@vibeforge.local");
   const [password, setPassword] = useState("admin12345");
+  const [totp, setTotp] = useState("");
+  const [mfaNeeded, setMfaNeeded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const r = await api.login(email.trim(), password);
+      const r = await api.login(email.trim(), password, totp || undefined);
       setToken(r.token);
+      localStorage.setItem("vf_refresh", r.refresh_token);
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign-in failed.");
+      const msg = err instanceof Error ? err.message : "Sign-in failed.";
+      if (msg.toLowerCase().includes("authenticator")) setMfaNeeded(true);
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -411,11 +423,26 @@ function Login({ onDone }: { onDone: () => void }) {
             <Label>Password</Label>
             <span className="mt-1 block"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></span>
           </label>
+          {mfaNeeded && (
+            <label className="block">
+              <Label>Authenticator code</Label>
+              <span className="mt-1 block"><Input inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={totp} onChange={(e) => setTotp(e.target.value)} /></span>
+            </label>
+          )}
           {error && <Alert>{error}</Alert>}
+          {notice && <Alert variant="info">{notice}</Alert>}
           <Button type="submit" busy={busy} className="w-full">
             {busy ? "Signing in…" : "Sign in"}
           </Button>
         </form>
+        <div className="mt-3 text-right">
+          <Button variant="ghost" size="sm" onClick={async () => {
+            try {
+              const r = await api.forgot(email.trim());
+              setNotice(r.reset_token ? `${r.message} Token: ${r.reset_token}` : r.message);
+            } catch { setNotice("If that email has an account, a reset link is on its way."); }
+          }}>Forgot password?</Button>
+        </div>
         <p className="mt-5 text-xs leading-relaxed text-text-muted">
           First run seeds <code className="rounded-sm bg-background px-1">admin@vibeforge.local / admin12345</code> (change via{" "}
           <code className="rounded-sm bg-background px-1">ADMIN_PASSWORD</code>). Ask your admin if you need an account.
@@ -899,6 +926,7 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
             <p className="mt-0.5 text-sm">{data.summary.last_push ? new Date(data.summary.last_push).toLocaleDateString() : "—"}</p>
           </div>
           <div className="ml-auto flex flex-wrap gap-2">
+            <PublishToggle projectId={data.project.id} />
             <CopyButton text={`${window.location.origin}/projects/${data.project.id}`} label="Copy project link" />
             {selected && <CopyButton text={`${window.location.origin}/projects/${data.project.id}/milestones/${selected}`} label="Copy milestone link" />}
           </div>
@@ -983,6 +1011,28 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
         </div>
       </div>
     </section>
+  );
+}
+
+function PublishToggle({ projectId }: { projectId: string }) {
+  const [isPublic, setIsPublic] = useState(false);
+  const toast = useToast();
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      aria-pressed={isPublic}
+      onClick={async () => {
+        const next = isPublic ? "space" : "public";
+        try {
+          await api.setVisibility(projectId, next);
+          setIsPublic(!isPublic);
+          toast.success(next === "public" ? "Published to the Marketplace." : "Made private to the space.");
+        } catch (err) { toast.error(err instanceof Error ? err.message : "Only a Space Owner can publish."); }
+      }}
+    >
+      {isPublic ? "Make private" : "Publish to Marketplace"}
+    </Button>
   );
 }
 
@@ -1103,6 +1153,15 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
                     )}
                     <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-background p-3 text-xs">{f.fix_text}</pre>
                     <div className="mt-3 flex flex-wrap gap-2">
+                      {f.kind === "cve" && f.fixed_version && (
+                        <Button size="sm" onClick={async () => {
+                          try {
+                            const r = await api.applyFix(f.id);
+                            toast.success(`Auto-fix pushed as a new milestone (${r.milestone_id.slice(0, 12)}…). Re-check its findings.`);
+                            onChanged();
+                          } catch (err) { toast.error(err instanceof Error ? err.message : "Auto-fix failed."); }
+                        }}>Apply fix automatically</Button>
+                      )}
                       <CopyButton text={f.fix_text} label="Copy fix" />
                       <Button variant="ghost" size="sm" onClick={async () => { await api.ignoreFinding(f.id); await load(); toast.info("Marked as not a problem."); }}>
                         Not a problem
@@ -1315,6 +1374,9 @@ function Profile() {
         </div>
       </Card>
 
+      <MfaCard />
+      <AccountDataCard />
+
       <Card className="p-5">
         <h3 className="font-serif text-lg font-bold">API tokens — how the skill signs in</h3>
         <p className="mt-1 text-sm text-text-muted">A token works like a password for one tool. You will see it once — copy it straight into your AI tool. Revoke it any time.</p>
@@ -1357,6 +1419,118 @@ function Profile() {
           </ul>
         )}
       </Card>
+    </section>
+  );
+}
+
+function MfaCard() {
+  const [secret, setSecret] = useState("");
+  const [code, setCode] = useState("");
+  const [enabled, setEnabled] = useState(false);
+  const toast = useToast();
+  return (
+    <Card className="p-5">
+      <h3 className="font-serif text-lg font-bold">Two-factor authentication (MFA)</h3>
+      <p className="mt-1 text-sm text-text-muted">Add an authenticator app (TOTP). After enabling, sign-in asks for the 6-digit code.</p>
+      {!secret && !enabled && (
+        <div className="mt-3">
+          <Button onClick={async () => {
+            try { const r = await api.mfaSetup(); setSecret(r.secret); }
+            catch (err) { toast.error(err instanceof Error ? err.message : "Setup failed."); }
+          }}>Set up authenticator</Button>
+        </div>
+      )}
+      {secret && !enabled && (
+        <div className="mt-3 space-y-3">
+          <p className="text-sm">Add this secret to your authenticator app, then enter a code:</p>
+          <code className="block break-all rounded-md bg-background p-2 text-sm">{secret}</code>
+          <form className="flex max-w-sm gap-2" onSubmit={async (e) => {
+            e.preventDefault();
+            try { await api.mfaEnable(code); setEnabled(true); toast.success("MFA is on."); }
+            catch (err) { toast.error(err instanceof Error ? err.message : "That code did not match."); }
+          }}>
+            <Input inputMode="numeric" placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} required aria-label="Authenticator code" />
+            <Button type="submit">Enable MFA</Button>
+          </form>
+        </div>
+      )}
+      {enabled && (
+        <div className="mt-3 flex items-center gap-2">
+          <Badge tone="success">MFA on</Badge>
+          <Button variant="ghost" size="sm" onClick={async () => { await api.mfaDisable(); setEnabled(false); setSecret(""); toast.info("MFA turned off."); }}>Turn off</Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function AccountDataCard() {
+  const [password, setPassword] = useState("");
+  const toast = useToast();
+  return (
+    <Card className="p-5">
+      <h3 className="font-serif text-lg font-bold">Your data</h3>
+      <p className="mt-1 text-sm text-text-muted">Export everything tied to your account, or delete the account (milestones stay, marked as deleted-user).</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={async () => {
+          try { await api.myExport(); toast.success("Export downloaded."); }
+          catch (err) { toast.error(err instanceof Error ? err.message : "Export failed."); }
+        }}>Export my data</Button>
+      </div>
+      <form className="mt-4 flex max-w-md gap-2" onSubmit={async (e) => {
+        e.preventDefault();
+        try { await api.deleteMe(password); setToken(null); location.href = "/"; }
+        catch (err) { toast.error(err instanceof Error ? err.message : "Delete failed — check your password."); }
+      }}>
+        <Input type="password" placeholder="Password to confirm delete" value={password} onChange={(e) => setPassword(e.target.value)} required aria-label="Password" />
+        <Button type="submit" variant="danger">Delete account</Button>
+      </form>
+    </Card>
+  );
+}
+
+function Marketplace({ go }: { go: (v: View) => void }) {
+  const [items, setItems] = useState<Awaited<ReturnType<typeof api.registry>> | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState("");
+  const load = useCallback(async (q: string) => {
+    try { setItems(await api.registry(q)); }
+    catch (e) { setError(e instanceof Error ? e.message : "Failed to load the marketplace."); }
+  }, []);
+  useEffect(() => { void load(""); }, [load]);
+  return (
+    <section aria-labelledby="market-title">
+      <h2 id="market-title" className="font-serif text-3xl font-bold">Marketplace</h2>
+      <p className="mt-1 max-w-2xl text-sm text-text-muted">Public projects anyone in this workspace can discover and fork. Owners publish from a project (visibility: public).</p>
+      <div className="mt-4 max-w-md">
+        <Input type="search" placeholder="Search public projects…" aria-label="Search marketplace" value={query}
+          onChange={(e) => { setQuery(e.target.value); void load(e.target.value); }} />
+      </div>
+      {error && <div className="mt-4"><Alert>{error}</Alert></div>}
+      {items === null && !error && <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3"><Skeleton className="h-44" /><Skeleton className="h-44" /><Skeleton className="h-44" /></div>}
+      {items !== null && items.length > 0 && (
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {items.map((pr) => (
+            <article key={pr.id} className="rounded-lg border border-border bg-surface p-5 shadow-surface transition duration-normal hover:-translate-y-0.5 hover:shadow-raised">
+              <span className="flex items-start gap-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-serif text-lg font-bold">{pr.name}</span>
+                  <span className="text-xs text-text-muted">/{pr.slug} · {pr.milestones} milestones</span>
+                </span>
+                <ProjectFavicon projectId={pr.id} name={pr.name} />
+              </span>
+              <p className="mt-3 flex flex-wrap gap-1.5">
+                {pr.languages.map((l) => <Badge key={l} tone="primary">{l}</Badge>)}
+                <Badge tone={pr.open_findings === 0 ? "success" : "danger"}>{pr.open_findings === 0 ? "✓ Healthy" : `${pr.open_findings} to fix`}</Badge>
+              </p>
+              <div className="mt-4 border-t border-border pt-3">
+                <Button size="sm" onClick={() => go({ name: "project", id: pr.id })}>View project</Button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      {items !== null && items.length === 0 && <div className="mt-5"><EmptyState title="Nothing public yet" hint="A Space Owner can publish a project from its page (API: visibility public)." /></div>}
     </section>
   );
 }

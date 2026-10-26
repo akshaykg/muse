@@ -41,6 +41,14 @@ pub struct User {
     /// Argon2id hash. Stored in the private DB file; API responses use `PublicUser`.
     pub password_hash: String,
     pub is_platform_admin: bool,
+    /// TOTP secret (base32) once MFA is enabled; None = MFA off.
+    #[serde(default)]
+    pub mfa_secret: Option<String>,
+    #[serde(default)]
+    pub mfa_enabled: bool,
+    /// External identity (OIDC subject) linked to this account.
+    #[serde(default)]
+    pub oidc_subject: Option<String>,
     pub is_blocked: bool,
     pub blocked_reason: Option<String>,
     pub created_at: String,
@@ -90,6 +98,28 @@ pub struct SpaceMember {
     pub principal_kind: String,
     pub principal_id: String,
     pub role: SpaceRole,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RefreshToken {
+    pub id: String,
+    pub user_id: String,
+    #[serde(default)]
+    pub token_hash: String,
+    pub expires_at: String,
+    pub revoked_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PasswordReset {
+    pub id: String,
+    pub user_id: String,
+    #[serde(default)]
+    pub token_hash: String,
+    pub expires_at: String,
+    pub used_at: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,7 +271,41 @@ pub struct Settings {
     pub allow_registration: bool,
     pub smtp_host: String,
     pub smtp_from: String,
+    #[serde(default)]
+    pub smtp_port: u16,
+    #[serde(default)]
+    pub smtp_user: String,
+    #[serde(default)]
+    pub smtp_password: String,
     pub public_base_url: String,
+    #[serde(default)]
+    pub webhook_url: String,
+    /// none | critical | high — push is flagged blocked at/above this severity.
+    #[serde(default)]
+    pub block_severity: String,
+    /// Comma-separated SPDX ids rejected on push, e.g. "GPL-3.0-only,AGPL-3.0-only".
+    #[serde(default)]
+    pub license_blocklist: String,
+    #[serde(default)]
+    pub fix_sla_days: i64,
+    #[serde(default)]
+    pub space_quota_mb: u64,
+    #[serde(default)]
+    pub space_member_quota: usize,
+    #[serde(default)]
+    pub osv_cache_hours: i64,
+    #[serde(default)]
+    pub scan_timeout_s: u64,
+    #[serde(default)]
+    pub clamd_host: String,
+    #[serde(default)]
+    pub oidc_issuer: String,
+    #[serde(default)]
+    pub oidc_client_id: String,
+    #[serde(default)]
+    pub oidc_client_secret: String,
+    #[serde(default)]
+    pub scim_token: String,
 }
 
 impl Default for Settings {
@@ -261,7 +325,23 @@ impl Default for Settings {
             allow_registration: false,
             smtp_host: String::new(),
             smtp_from: String::new(),
+            smtp_port: 587,
+            smtp_user: String::new(),
+            smtp_password: String::new(),
             public_base_url: "http://localhost:8080".into(),
+            webhook_url: String::new(),
+            block_severity: "none".into(),
+            license_blocklist: String::new(),
+            fix_sla_days: 30,
+            space_quota_mb: 0,
+            space_member_quota: 0,
+            osv_cache_hours: 24,
+            scan_timeout_s: 60,
+            clamd_host: String::new(),
+            oidc_issuer: String::new(),
+            oidc_client_id: String::new(),
+            oidc_client_secret: String::new(),
+            scim_token: String::new(),
         }
     }
 }

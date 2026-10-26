@@ -407,6 +407,43 @@ pub fn scan_unused_deps(root: &Path, deps: &[Dep], milestone_id: &str) -> Vec<Fi
     out
 }
 
+/// Blocked-license findings from package.json / Cargo.toml license fields.
+pub fn scan_licenses(root: &Path, blocklist: &[String], milestone_id: &str) -> Vec<Finding> {
+    if blocklist.is_empty() { return Vec::new(); }
+    let mut found: Vec<(String, String)> = Vec::new(); // (license, file)
+    for manifest in find_manifests(root, &["package.json", "Cargo.toml", "composer.json"]) {
+        let rel = rel_path(root, &manifest);
+        if let Some(v) = read_json(&manifest) {
+            if let Some(lic) = v.get("license").and_then(|l| l.as_str().or_else(|| l.get("type").and_then(|t| t.as_str()))) {
+                found.push((lic.to_string(), rel));
+            }
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(&manifest) {
+            for line in text.lines() {
+                let t = line.trim();
+                if t.starts_with("license") && t.contains('=') {
+                    let lic = t.split('=').nth(1).unwrap_or("").trim().trim_matches('"').to_string();
+                    if !lic.is_empty() { found.push((lic, rel.clone())); }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (lic, file) in found {
+        for blocked in blocklist {
+            if lic.to_uppercase().contains(&blocked.to_uppercase()) {
+                out.push(mk(milestone_id, "license", "high",
+                    &format!("License {lic} needs legal review"),
+                    "This project declares a license your admin has flagged. It can limit how you sell or share the app.",
+                    "Check the license terms, pick a compatible library, or ask your admin/legal contact before shipping.",
+                    Some(file.clone()), None));
+            }
+        }
+    }
+    out
+}
+
 // ------------------------------------------------------------------- OSV
 
 #[derive(Deserialize)]
@@ -458,19 +495,42 @@ pub async fn query_osv(deps: &[Dep], timeout_s: u64, milestone_id: &str) -> Vec<
     let batch: OsvBatchResp = match resp.json().await { Ok(v) => v, Err(_) => return Vec::new() };
 
     // querybatch returns IDs only — fetch each advisory once for severity
-    // (CVSS), affected ranges (fixed version) and summary.
+    // (CVSS), affected ranges (fixed version) and summary. Details are cached
+    // on disk (OSV_CACHE_FILE, default data/osv-cache.json) for OSV_CACHE_HOURS.
+    let cache_path = std::env::var("OSV_CACHE_FILE").unwrap_or_else(|_| "data/osv-cache.json".into());
+    let cache_ttl_s: i64 = std::env::var("OSV_CACHE_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24) * 3600;
+    let mut cache: std::collections::HashMap<String, (i64, serde_json::Value)> =
+        std::fs::read_to_string(&cache_path).ok()
+            .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let now_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut details: std::collections::HashMap<String, OsvVuln> = std::collections::HashMap::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for result in &batch.results {
         for vuln in &result.vulns {
             if seen.insert(vuln.id.clone()) && details.len() < 120 {
+                if let Some((ts, raw)) = cache.get(&vuln.id) {
+                    if now_ts - ts < cache_ttl_s {
+                        if let Ok(full) = serde_json::from_value::<OsvVuln>(raw.clone()) {
+                            details.insert(full.id.clone(), full);
+                            continue;
+                        }
+                    }
+                }
                 if let Ok(r) = client.get(format!("https://api.osv.dev/v1/vulns/{}", vuln.id)).send().await {
-                    if let Ok(full) = r.json::<OsvVuln>().await {
-                        details.insert(full.id.clone(), full);
+                    if let Ok(raw) = r.json::<serde_json::Value>().await {
+                        cache.insert(vuln.id.clone(), (now_ts, raw.clone()));
+                        if let Ok(full) = serde_json::from_value::<OsvVuln>(raw) {
+                            details.insert(full.id.clone(), full);
+                        }
                     }
                 }
             }
         }
+    }
+
+    if let Ok(text) = serde_json::to_string(&cache) {
+        if let Some(parent) = Path::new(&cache_path).parent() { let _ = std::fs::create_dir_all(parent); }
+        let _ = std::fs::write(&cache_path, text);
     }
 
     let mut out = Vec::new();
