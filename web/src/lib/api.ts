@@ -39,15 +39,16 @@ export const api = {
   members: (spaceId: string) => req<{ principal_kind: string; principal_id: string; label: string; role: string }[]>(`/api/v1/spaces/${spaceId}/members`),
   addMember: (spaceId: string, body: { principal_kind: string; principal_id: string; role: string }) =>
     req(`/api/v1/spaces/${spaceId}/members`, { method: "POST", body: JSON.stringify(body) }),
-  spaceProjects: (spaceId: string) => req<{ id: string; slug: string; name: string; milestones: number; open_findings: number }[]>(`/api/v1/spaces/${spaceId}/projects`),
+  spaceProjects: (spaceId: string) => req<{ id: string; slug: string; name: string; milestones: number; languages: string[]; last_activity: string | null; open_findings: number; vulnerabilities: number }[]>(`/api/v1/spaces/${spaceId}/projects`),
   createProject: (spaceId: string, name: string) =>
     req<{ id: string }>(`/api/v1/spaces/${spaceId}/projects`, { method: "POST", body: JSON.stringify({ name }) }),
   project: (id: string) => req<{ project: { id: string; name: string; slug: string; space_id: string }; summary: { languages: string[]; milestones: number; open_findings: number; vulnerabilities: number; secrets: number; fix_now: number; fix_soon: number; good_to_know: number; last_push: string | null }; milestones: { id: string; seq_no: number; label: string; scan_status: string; languages: string[]; created_at: string; findings: number; screenshots: string[] }[] }>(`/api/v1/projects/${id}`),
   milestone: (id: string) => req<{
     milestone: { id: string; label: string; scan_status: string; created_at: string; screenshots: string[]; manifest: { about: string; stage: string } };
     files: { path: string; size_bytes: number }[];
-    findings: { id: string; kind: string; severity: string; plain_title: string; plain_explain: string; fix_text: string; file_path: string | null; status: string }[];
+    findings: { id: string; kind: string; severity: string; plain_title: string; plain_explain: string; fix_text: string; file_path: string | null; status: string; cve_id: string | null; package: string | null; current_version: string | null; fixed_version: string | null; cvss_score: number | null; cvss_vector: string | null }[];
     todos: { id: string; body: string; done: boolean; source: string }[];
+    sbom: { tool: string; total: number; packages: { name: string; version: string; type: string; purl: string; ecosystem: string | null }[] };
   }>(`/api/v1/milestones/${id}`),
   fileContent: (id: string, path: string) =>
     req<{ path: string; text: string }>(`/api/v1/milestones/${id}/files/content?path=${encodeURIComponent(path)}`),
@@ -81,6 +82,21 @@ export const api = {
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(data?.error ?? data?.message ?? `Upload failed (${res.status})`);
     return data;
+  },
+
+  async downloadSbom(milestoneId: string): Promise<void> {
+    const token = getToken();
+    const res = await fetch(`/api/v1/milestones/${milestoneId}/sbom`, {
+      headers: { Authorization: token ? `Bearer ${token}` : "" },
+    });
+    if (!res.ok) throw new Error("Could not download the SBOM.");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "SBOM.json";
+    a.click();
+    URL.revokeObjectURL(url);
   },
 
   async addScreenshot(milestoneId: string, file: File): Promise<unknown> {

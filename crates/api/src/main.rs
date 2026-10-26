@@ -385,12 +385,21 @@ async fn list_projects(State(state): State<Shared>, headers: HeaderMap, Path(spa
     let a = auth!(&state, &headers);
     let store = state.store.read().await;
     if space_role(&store, &a.0, &space_id).is_none() { return err(StatusCode::FORBIDDEN, "Not a member of this space."); }
-    let out: Vec<_> = store.projects.values().filter(|p| p.space_id == space_id).map(|p| serde_json::json!({
-        "id": p.id, "slug": p.slug, "name": p.name,
-        "milestones": store.milestones.values().filter(|m| m.project_id == p.id).count(),
-        "open_findings": store.findings.values().filter(|f| f.status == "open"
-            && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count()
-    })).collect();
+    let out: Vec<_> = store.projects.values().filter(|p| p.space_id == space_id).map(|p| {
+        let pms: Vec<&Milestone> = store.milestones.values().filter(|m| m.project_id == p.id).collect();
+        let mut langs: Vec<String> = Vec::new();
+        for m in &pms { for l in &m.languages { if !langs.contains(l) { langs.push(l.clone()); } } }
+        serde_json::json!({
+            "id": p.id, "slug": p.slug, "name": p.name,
+            "milestones": pms.len(),
+            "languages": langs,
+            "last_activity": pms.iter().map(|m| m.created_at.clone()).max(),
+            "open_findings": store.findings.values().filter(|f| f.status == "open"
+                && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count(),
+            "vulnerabilities": store.findings.values().filter(|f| f.status == "open" && f.kind == "cve"
+                && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count()
+        })
+    }).collect();
     Json(out).into_response()
 }
 
@@ -497,10 +506,23 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
         stored.push(StoredFile { milestone_id: milestone_id.clone(), path: rel, blob_key: key, size_bytes: bytes.len() as u64, sha256: scanner::sha256_hex(&bytes) });
     }
 
-    // Scan: secrets + practices + unused deps + OSV CVEs.
+    // SBOM (Syft) from the same manifests that feed OSV — stored in the milestone.
+    let deps = scanner::collect_all_deps(&tmp);
+    let (sbom_doc, sbom_pkgs, sbom_tool) = scanner::generate_sbom(&tmp, &deps, &project.slug);
+    let sbom_bytes = serde_json::to_vec_pretty(&sbom_doc).unwrap_or_default();
+    let sbom_key = format!("files/{}/{}", milestone_id, scanner::sha256_hex(&sbom_bytes));
+    let sbom_dest = state.data_dir.join(&sbom_key);
+    if let Some(parent) = sbom_dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
+    let _ = tokio::fs::write(&sbom_dest, &sbom_bytes).await;
+    stored.push(StoredFile {
+        milestone_id: milestone_id.clone(), path: "SBOM.json".into(),
+        blob_key: sbom_key, size_bytes: sbom_bytes.len() as u64, sha256: scanner::sha256_hex(&sbom_bytes),
+    });
+    let _ = sbom_tool;
+
+    // Scan: secrets + practices + unused deps + OSV CVEs (from SBOM packages).
     let mut findings = scanner::scan_secrets(&tmp, &milestone_id);
     findings.extend(scanner::scan_practices(&tmp, &milestone_id));
-    let deps = scanner::collect_all_deps(&tmp);
     if settings.unused_dep_check {
         findings.extend(scanner::scan_unused_deps(&tmp, &deps, &milestone_id));
     }
@@ -574,13 +596,33 @@ async fn get_milestone(State(state): State<Shared>, headers: HeaderMap, Path(id)
     if can_read_project(&store, &a.0, &m.project_id).is_none() { return err(StatusCode::FORBIDDEN, "No access to this project."); }
     let files: Vec<_> = store.files.iter().filter(|f| f.milestone_id == id)
         .map(|f| serde_json::json!({ "path": f.path, "size_bytes": f.size_bytes, "sha256": f.sha256 })).collect();
-    let findings: Vec<_> = store.findings.values().filter(|f| f.milestone_id == id).collect();
-    let todos: Vec<_> = store.todos.iter().filter(|t| t.milestone_id == id).collect();
+    let findings: Vec<_> = store.findings.values().filter(|f| f.milestone_id == id).cloned().collect();
+    let todos: Vec<_> = store.todos.iter().filter(|t| t.milestone_id == id).cloned().collect();
+    let sbom_key = store.files.iter().find(|f| f.milestone_id == id && f.path == "SBOM.json").map(|f| f.blob_key.clone());
+    drop(store);
+    let mut sbom_packages: Vec<serde_json::Value> = Vec::new();
+    let mut sbom_tool = "vibeforge".to_string();
+    if let Some(key) = sbom_key {
+        if let Ok(bytes) = tokio::fs::read(state.data_dir.join(&key)).await {
+            if let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                sbom_tool = doc["descriptor"]["name"].as_str().unwrap_or("syft").to_string();
+                if let Some(arts) = doc["artifacts"].as_array() {
+                    sbom_packages = arts.iter().map(|a| serde_json::json!({
+                        "name": a["name"], "version": a["version"], "type": a["type"],
+                        "purl": a["purl"], "ecosystem": a["metadata"]["ecosystem"]
+                    })).collect();
+                }
+            }
+        }
+    }
+    let store = state.store.read().await;
+    let Some(m) = store.milestones.get(&id).cloned() else { return err(StatusCode::NOT_FOUND, "Milestone not found."); };
     Json(serde_json::json!({
         "milestone": { "id": m.id, "project_id": m.project_id, "seq_no": m.seq_no, "label": m.label,
             "scan_status": m.scan_status, "created_at": m.created_at, "manifest": m.manifest,
             "screenshots": m.screenshots, "parent_milestone_id": m.parent_milestone_id },
-        "files": files, "findings": findings, "todos": todos
+        "files": files, "findings": findings, "todos": todos,
+        "sbom": { "tool": sbom_tool, "total": sbom_packages.len(), "packages": sbom_packages }
     })).into_response()
 }
 
@@ -850,6 +892,28 @@ async fn put_settings(State(state): State<Shared>, headers: HeaderMap, Json(body
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
+/// Download the milestone's SBOM.json (Syft format) as a file.
+async fn download_sbom(State(state): State<Shared>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let a = auth!(&state, &headers);
+    let store = state.store.read().await;
+    let Some(m) = store.milestones.get(&id) else { return err(StatusCode::NOT_FOUND, "Milestone not found."); };
+    if can_read_project(&store, &a.0, &m.project_id).is_none() { return err(StatusCode::FORBIDDEN, "No access."); }
+    let Some(f) = store.files.iter().find(|f| f.milestone_id == id && f.path == "SBOM.json") else {
+        return err(StatusCode::NOT_FOUND, "No SBOM for this milestone yet — push again to generate one.");
+    };
+    let key = f.blob_key.clone();
+    drop(store);
+    match tokio::fs::read(state.data_dir.join(&key)).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json"),
+             (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=SBOM.json")],
+            bytes,
+        ).into_response(),
+        Err(_) => err(StatusCode::NOT_FOUND, "SBOM data missing."),
+    }
+}
+
 async fn serve_blob(State(state): State<Shared>, headers: HeaderMap, Path(key): Path<String>) -> Response {
     let _ = auth!(&state, &headers);
     // Keys are content-addressed; the milestone ACL was checked when the key was handed out.
@@ -920,6 +984,7 @@ async fn main() {
         .route("/api/v1/milestones/{id}", get(get_milestone))
         .route("/api/v1/milestones/{id}/files/content", get(file_content))
         .route("/api/v1/milestones/{id}/findings", get(milestone_findings))
+        .route("/api/v1/milestones/{id}/sbom", get(download_sbom))
         .route("/api/v1/milestones/{id}/fork", post(fork_milestone))
         .route("/api/v1/milestones/{id}/screenshots", post(add_screenshot))
         .route("/api/v1/findings/{id}/ignore", post(ignore_finding))

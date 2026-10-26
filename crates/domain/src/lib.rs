@@ -173,7 +173,15 @@ pub struct Finding {
     pub line_no: Option<usize>,
     pub cve_id: Option<String>,
     pub package: Option<String>,
+    /// Version found in the SBOM for `package`.
+    #[serde(default)]
+    pub current_version: Option<String>,
     pub fixed_version: Option<String>,
+    /// CVSS v3.1 base score computed from the OSV severity vector.
+    #[serde(default)]
+    pub cvss_score: Option<f64>,
+    #[serde(default)]
+    pub cvss_vector: Option<String>,
     pub status: String, // open | fixed | ignored
 }
 

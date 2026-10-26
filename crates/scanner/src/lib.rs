@@ -419,6 +419,17 @@ struct OsvVuln {
     #[serde(default)] summary: Option<String>,
     #[serde(default)] aliases: Vec<String>,
     #[serde(default)] affected: Vec<OsvAffected>,
+    #[serde(default)] severity: Vec<OsvSeverity>,
+    #[serde(default)] database_specific: OsvDbSpecific,
+}
+#[derive(Deserialize, Default)]
+struct OsvDbSpecific {
+    #[serde(default)] severity: Option<String>,
+}
+#[derive(Deserialize)]
+struct OsvSeverity {
+    #[serde(rename = "type", default)] kind: String,
+    #[serde(default)] score: String,
 }
 #[derive(Deserialize)]
 struct OsvAffected { #[serde(default)] ranges: Vec<OsvRange> }
@@ -445,29 +456,68 @@ pub async fn query_osv(deps: &[Dep], timeout_s: u64, milestone_id: &str) -> Vec<
         Err(_) => return Vec::new(),
     };
     let batch: OsvBatchResp = match resp.json().await { Ok(v) => v, Err(_) => return Vec::new() };
+
+    // querybatch returns IDs only — fetch each advisory once for severity
+    // (CVSS), affected ranges (fixed version) and summary.
+    let mut details: std::collections::HashMap<String, OsvVuln> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for result in &batch.results {
+        for vuln in &result.vulns {
+            if seen.insert(vuln.id.clone()) && details.len() < 120 {
+                if let Ok(r) = client.get(format!("https://api.osv.dev/v1/vulns/{}", vuln.id)).send().await {
+                    if let Ok(full) = r.json::<OsvVuln>().await {
+                        details.insert(full.id.clone(), full);
+                    }
+                }
+            }
+        }
+    }
+
     let mut out = Vec::new();
     for (dep, result) in deps.iter().zip(batch.results.iter()) {
-        for vuln in &result.vulns {
+        for stub in &result.vulns {
+            let vuln = details.get(&stub.id).unwrap_or(stub);
             let fixed = vuln.affected.iter().flat_map(|a| a.ranges.iter())
                 .flat_map(|r| r.events.iter()).find_map(|e| e.fixed.clone());
+            let vector = vuln.severity.iter()
+                .find(|sev| sev.kind.starts_with("CVSS"))
+                .map(|sev| sev.score.clone())
+                .filter(|v| !v.is_empty());
+            let cvss_score = vector.as_deref().and_then(cvss_base_score);
+            let severity = match cvss_score {
+                Some(score) if score >= 9.0 => "critical".to_string(),
+                Some(score) if score >= 7.0 => "high".to_string(),
+                Some(score) if score >= 4.0 => "medium".to_string(),
+                Some(_) => "low".to_string(),
+                None => match vuln.database_specific.severity.as_deref().map(|v| v.to_uppercase()).as_deref() {
+                    Some("CRITICAL") => "critical".to_string(),
+                    Some("HIGH") => "high".to_string(),
+                    Some("MODERATE") | Some("MEDIUM") => "medium".to_string(),
+                    Some("LOW") => "low".to_string(),
+                    _ => "high".to_string(),
+                },
+            };
             let title = vuln.summary.clone().unwrap_or_else(|| format!("Known problem in {}", dep.name));
             out.push(Finding {
                 id: uuid_like(),
                 milestone_id: milestone_id.to_string(),
                 kind: "cve".into(),
-                severity: "high".into(),
+                severity,
                 plain_title: format!("Update {} — {}", dep.name, title),
                 plain_explain: format!("The version of {} in this project ({}) has a publicly known security problem ({}). Attackers look for exactly these.",
                     dep.name, dep.version, vuln.id),
                 fix_text: match &fixed {
-                    Some(v) => format!("Update {} to {} or later, then push a new milestone.", dep.name, v),
-                    None => format!("Check the advisory for {} and update {} to the latest version.", vuln.id, dep.name),
+                    Some(v) => format!("Update {} from {} to {} (or later), run your tests, then push a new milestone.", dep.name, dep.version, v),
+                    None => format!("No fixed version is published yet for {}. Check the advisory {} and update {} to the latest version, or replace the library.", vuln.id, vuln.id, dep.name),
                 },
                 file_path: None,
                 line_no: None,
                 cve_id: Some(vuln.aliases.first().cloned().unwrap_or_else(|| vuln.id.clone())),
                 package: Some(dep.name.clone()),
+                current_version: Some(dep.version.clone()),
                 fixed_version: fixed,
+                cvss_score,
+                cvss_vector: vector,
                 status: "open".into(),
             });
         }
@@ -489,7 +539,8 @@ fn mk(milestone_id: &str, kind: &str, severity: &str, title: &str, explain: &str
         id: uuid_like(), milestone_id: milestone_id.to_string(), kind: kind.into(),
         severity: severity.into(), plain_title: title.into(), plain_explain: explain.into(),
         fix_text: fix.into(), file_path: file, line_no: line,
-        cve_id: None, package: None, fixed_version: None, status: "open".into(),
+        cve_id: None, package: None, current_version: None, fixed_version: None,
+        cvss_score: None, cvss_vector: None, status: "open".into(),
     }
 }
 
@@ -575,6 +626,28 @@ mod tests {
     }
 
     #[test]
+    fn cvss_known_vectors() {
+        // Network-exploitable, no auth, full impact = 9.8 (textbook example).
+        assert_eq!(cvss_base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"), Some(9.8));
+        assert_eq!(cvss_base_score("CVSS:3.1/AV:P/AC:H/PR:H/UI:R/S:U/C:N/I:N/A:N"), Some(0.0));
+        assert_eq!(cvss_base_score("not-a-vector"), None);
+        assert_eq!(cvss_severity_word(9.8), "Critical");
+    }
+
+    #[test]
+    fn sbom_has_purls_for_all_ecosystems() {
+        let deps = vec![
+            Dep { ecosystem: "npm".into(), name: "react".into(), version: "19.1.0".into() },
+            Dep { ecosystem: "crates.io".into(), name: "serde".into(), version: "1.0.0".into() },
+        ];
+        let pkgs = sbom_packages(&deps);
+        assert_eq!(pkgs[0].purl, "pkg:npm/react@19.1.0");
+        assert_eq!(pkgs[1].purl, "pkg:cargo/serde@1.0.0");
+        let doc = sbom_document(&pkgs, "demo", "vibeforge");
+        assert_eq!(doc["artifacts"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
     fn finds_hardcoded_secret() {
         let dir = std::env::temp_dir().join("vf-test-secret");
         let _ = std::fs::remove_dir_all(&dir);
@@ -582,4 +655,150 @@ mod tests {
         std::fs::write(dir.join("app.js"), "const password = \"hunter2secret\";\n").unwrap();
         assert!(!scan_secrets(&dir, "ms-1").is_empty());
     }
+}
+
+// ------------------------------------------------------------------ SBOM
+// Syft SBOM for every milestone. If a real `syft` binary is on PATH (or
+// $SYFT_BIN) we shell out to it; otherwise we emit the same syft-json shape
+// from the parsed manifests so the feature works with zero installs.
+// Either way the document is stored as SBOM.json inside the milestone and
+// its package list is what feeds the OSV query — one source of truth.
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SbomPackage {
+    pub name: String,
+    pub version: String,
+    pub ecosystem: String,
+    /// Package URL, e.g. pkg:npm/react@19.1.0
+    pub purl: String,
+    /// Syft package type: npm, python, golang, rust-crate, java-archive, composer, gem
+    #[serde(rename = "type")]
+    pub pkg_type: String,
+}
+
+fn purl_for(dep: &Dep) -> (String, String) {
+    let v = &dep.version;
+    match dep.ecosystem.as_str() {
+        "npm" => (format!("pkg:npm/{}@{}", dep.name.replace('@', "%40"), v), "npm".into()),
+        "PyPI" => (format!("pkg:pypi/{}@{}", dep.name.to_lowercase(), v), "python".into()),
+        "Go" => (format!("pkg:golang/{}@{}", dep.name, v), "golang".into()),
+        "crates.io" => (format!("pkg:cargo/{}@{}", dep.name, v), "rust-crate".into()),
+        "Maven" => {
+            let (g, a) = dep.name.split_once(':').unwrap_or(("unknown", dep.name.as_str()));
+            (format!("pkg:maven/{}/{}@{}", g, a, v), "java-archive".into())
+        }
+        "Packagist" => (format!("pkg:composer/{}@{}", dep.name, v), "composer".into()),
+        "RubyGems" => (format!("pkg:gem/{}@{}", dep.name, v), "gem".into()),
+        _ => (format!("pkg:generic/{}@{}", dep.name, v), "generic".into()),
+    }
+}
+
+pub fn sbom_packages(deps: &[Dep]) -> Vec<SbomPackage> {
+    let mut seen = std::collections::HashSet::new();
+    deps.iter()
+        .filter(|d| seen.insert(format!("{}:{}@{}", d.ecosystem, d.name, d.version)))
+        .map(|d| {
+            let (purl, pkg_type) = purl_for(d);
+            SbomPackage { name: d.name.clone(), version: d.version.clone(), ecosystem: d.ecosystem.clone(), purl, pkg_type }
+        })
+        .collect()
+}
+
+/// Full syft-json document (schema 16.x shape: artifacts/source/descriptor).
+pub fn sbom_document(packages: &[SbomPackage], project_slug: &str, tool: &str) -> serde_json::Value {
+    let artifacts: Vec<serde_json::Value> = packages.iter().enumerate().map(|(i, p)| serde_json::json!({
+        "id": format!("sbom-pkg-{i}"),
+        "name": p.name,
+        "version": p.version,
+        "type": p.pkg_type,
+        "foundBy": "vibeforge-manifest-cataloger",
+        "purl": p.purl,
+        "metadata": { "ecosystem": p.ecosystem }
+    })).collect();
+    serde_json::json!({
+        "artifacts": artifacts,
+        "artifactRelationships": [],
+        "source": { "id": "", "name": project_slug, "version": "", "type": "directory" },
+        "distro": {},
+        "descriptor": { "name": tool, "version": "vibeforge", "configuration": {} },
+        "schema": { "version": "16.0.0", "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema.json" }
+    })
+}
+
+/// Try real syft first (`syft packages <dir> -o syft-json`), fall back to the
+/// built-in cataloger. Returns (document, packages, tool label).
+pub fn generate_sbom(root: &Path, deps: &[Dep], project_slug: &str) -> (serde_json::Value, Vec<SbomPackage>, String) {
+    let packages = sbom_packages(deps);
+    if let Some(bin) = syft_binary() {
+        if let Some(doc) = run_syft(&bin, root) {
+            return (doc, packages, "syft".into());
+        }
+    }
+    (sbom_document(&packages, project_slug, "vibeforge (syft-compatible)"), packages, "vibeforge".into())
+}
+
+fn syft_binary() -> Option<PathBuf> {
+    if let Ok(b) = std::env::var("SYFT_BIN") {
+        let p = PathBuf::from(b);
+        if p.exists() { return Some(p); }
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).find_map(|dir| {
+            let cand = dir.join("syft");
+            if cand.exists() { Some(cand) } else { None }
+        })
+    })
+}
+
+fn run_syft(bin: &Path, root: &Path) -> Option<serde_json::Value> {
+    let out = std::process::Command::new(bin)
+        .args(["packages", &format!("dir:{}", root.display()), "-o", "syft-json", "-q"])
+        .output()
+        .ok()?;
+    if !out.status.success() { return None; }
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+// ------------------------------------------------------------------ CVSS
+
+/// CVSS v3.1 base score from a vector string like
+/// "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" (first.org spec).
+/// Returns None for vectors we cannot parse — UI then shows the OSV severity word only.
+pub fn cvss_base_score(vector: &str) -> Option<f64> {
+    let mut m: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for part in vector.split('/') {
+        if let Some((k, v)) = part.split_once(':') {
+            if k != "CVSS" { m.insert(k, v); }
+        }
+    }
+    let av: f64 = match *m.get("AV")? { "N" => 0.85, "A" => 0.62, "L" => 0.55, "P" => 0.20, _ => return None };
+    let ac: f64 = match *m.get("AC")? { "L" => 0.77, "H" => 0.44, _ => return None };
+    let (pr_u, pr_c): (f64, f64) = match *m.get("PR")? {
+        "N" => (0.85, 0.85), "L" => (0.62, 0.68), "H" => (0.27, 0.50), _ => return None,
+    };
+    let ui: f64 = match *m.get("UI")? { "N" => 0.85, "R" => 0.62, _ => return None };
+    let scope_changed = *m.get("S")? == "C";
+    let c: f64 = match *m.get("C")? { "H" => 0.56, "L" => 0.22, "N" => 0.0, _ => return None };
+    let i: f64 = match *m.get("I")? { "H" => 0.56, "L" => 0.22, "N" => 0.0, _ => return None };
+    let a: f64 = match *m.get("A")? { "H" => 0.56, "L" => 0.22, "N" => 0.0, _ => return None };
+    let pr = if scope_changed { pr_c } else { pr_u };
+    let iss = 1.0 - ((1.0 - c) * (1.0 - i) * (1.0 - a));
+    let impact = if scope_changed {
+        7.52 * (iss - 0.029) - 3.25 * (iss - 0.02).powf(15.0)
+    } else {
+        6.42 * iss
+    };
+    let exploitability = 8.22 * av * ac * pr * ui;
+    if impact <= 0.0 { return Some(0.0); }
+    let raw = if scope_changed {
+        (1.08 * (impact + exploitability)).min(10.0)
+    } else {
+        (impact + exploitability).min(10.0)
+    };
+    // Round up to one decimal (spec "roundup").
+    Some((raw * 10.0).ceil() / 10.0)
+}
+
+pub fn cvss_severity_word(score: f64) -> &'static str {
+    if score >= 9.0 { "Critical" } else if score >= 7.0 { "High" } else if score >= 4.0 { "Medium" } else if score > 0.0 { "Low" } else { "None" }
 }

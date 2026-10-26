@@ -456,3 +456,45 @@ export function Avatar({ name, size = "md" }: { name: string; size?: "sm" | "md"
     </span>
   );
 }
+
+/** Centered dialog over a translucent backdrop. Escape / backdrop click closes. */
+export function Modal({
+  open,
+  onClose,
+  title,
+  hint,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  const ref = useDismiss<HTMLDivElement>(open, onClose);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-overlay flex items-end justify-center p-0 sm:items-center sm:p-6" role="presentation">
+      {/* Translucent scrim — click anywhere outside the card to dismiss */}
+      <button type="button" aria-label="Close dialog" onClick={onClose} className="absolute inset-0 bg-text/45 backdrop-blur-[2px]" />
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="vf-pop relative max-h-[90vh] w-full max-w-md overflow-auto rounded-t-lg border border-border bg-surface-elevated p-5 shadow-overlay sm:rounded-lg"
+      >
+        <div className="flex items-start gap-3">
+          <div>
+            <h3 className="font-serif text-lg font-bold">{title}</h3>
+            {hint && <p className="mt-0.5 text-sm text-text-muted">{hint}</p>}
+          </div>
+          <span className="ml-auto">
+            <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close">✕</Button>
+          </span>
+        </div>
+        <div className="mt-4">{children}</div>
+      </div>
+    </div>
+  );
+}

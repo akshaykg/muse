@@ -12,6 +12,7 @@ import {
   Label,
   Menu,
   MenuItem,
+  Modal,
   PermissionsProvider,
   Select,
   Skeleton,
@@ -60,6 +61,12 @@ const SEV_WORD: Record<string, string> = {
   medium: "Fix soon",
   low: "Good to know",
 };
+
+function cvssLabel(score: number | null): string | null {
+  if (score == null) return null;
+  const word = score >= 9 ? "Critical" : score >= 7 ? "High" : score >= 4 ? "Medium" : "Low";
+  return `CVSS ${score.toFixed(1)} · ${word}`;
+}
 
 function sevTone(sev: string): "danger" | "warning" | "neutral" {
   if (sev === "critical" || sev === "high") return "danger";
@@ -157,6 +164,18 @@ function Shell() {
             </nav>
 
             <div className="ml-auto flex items-center gap-2">
+              {perms.isAdmin && (
+                <Button
+                  size="sm"
+                  aria-label="Create a new space"
+                  onClick={() => {
+                    setView({ name: "spaces" });
+                    window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
+                  }}
+                >
+                  + New space
+                </Button>
+              )}
               {/* Single Settings entry (admins): one button, tabbed page inside. */}
               {perms.isAdmin && (
                 <Button
@@ -166,7 +185,11 @@ function Shell() {
                   aria-current={view.name === "admin" || undefined}
                   onClick={() => setView({ name: "admin", tab: "vulns" })}
                 >
-                  <span aria-hidden>⚙</span> Settings
+                  <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                  Settings
                 </Button>
               )}
 
@@ -267,9 +290,16 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
   const [name, setName] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
   const canCreate = usePermission("spaces:create");
+
+  useEffect(() => {
+    const open = () => setShowCreate(true);
+    window.addEventListener("vf:new-space", open);
+    return () => window.removeEventListener("vf:new-space", open);
+  }, []);
 
   const load = useCallback(async () => {
     try { setSpaces(await api.spaces()); }
@@ -306,6 +336,11 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
           <span className="w-full sm:w-60">
             <Input type="search" placeholder="Search spaces…" aria-label="Search spaces" value={query} onChange={(e) => setQuery(e.target.value)} />
           </span>
+          {canCreate && (
+            <Button aria-expanded={showCreate} onClick={() => setShowCreate((v) => !v)}>
+              {showCreate ? "Close" : "+ New space"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -374,17 +409,52 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
       )}
 
       {canCreate && (
-        <Card className="mt-8 p-5">
-          <h3 className="font-medium">Create a space</h3>
-          <p className="mt-0.5 text-sm text-text-muted">You become its Owner. Add people and groups from inside the space.</p>
-          <form className="mt-3 flex max-w-md gap-2" onSubmit={async (e) => {
+        <Modal
+          open={showCreate}
+          onClose={() => setShowCreate(false)}
+          title="Create a space"
+          hint="You become its Owner. Add people and groups from inside the space."
+        >
+          <form className="flex gap-2" onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true);
-            try { await api.createSpace(name); setName(""); await load(); toast.success("Space created."); }
+            try { await api.createSpace(name); setName(""); setShowCreate(false); await load(); toast.success("Space created."); }
             catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the space."); }
             finally { setBusy(false); }
           }}>
-            <Input placeholder="Space name, e.g. Client work" value={name} onChange={(e) => setName(e.target.value)} required aria-label="Space name" />
+            <Input autoFocus placeholder="Space name, e.g. Client work" value={name} onChange={(e) => setName(e.target.value)} required aria-label="Space name" />
+            <Button type="submit" busy={busy}>Create space</Button>
+          </form>
+        </Modal>
+      )}
+      {spaces !== null && visible.length === 0 && (
+        <div className="mt-6">
+          <EmptyState
+            title={query ? "No spaces match that search" : "No spaces yet"}
+            hint={query ? "Try a different name." : me.user.is_platform_admin ? "Create your first space below." : "Ask an admin to add you to a space."}
+          />
+        </div>
+      )}
+
+      {canCreate && showCreate && (
+        <Card className="vf-page mt-6 p-5">
+          <div className="flex items-start gap-3">
+            <div>
+              <h3 className="font-medium">Create a space</h3>
+              <p className="mt-0.5 text-sm text-text-muted">You become its Owner. Add people and groups from inside the space.</p>
+            </div>
+            <span className="ml-auto">
+              <Button variant="ghost" size="sm" onClick={() => setShowCreate(false)}>Cancel</Button>
+            </span>
+          </div>
+          <form className="mt-3 flex max-w-md gap-2" onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            try { await api.createSpace(name); setName(""); setShowCreate(false); await load(); toast.success("Space created."); }
+            catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the space."); }
+            finally { setBusy(false); }
+          }}>
+            <Input autoFocus placeholder="Space name, e.g. Client work" value={name} onChange={(e) => setName(e.target.value)} required aria-label="Space name" />
             <Button type="submit" busy={busy}>Create space</Button>
           </form>
         </Card>
@@ -401,114 +471,190 @@ function SpaceDetail({ spaceId, label, go }: { spaceId: string; label: string; g
   const [pickUser, setPickUser] = useState("");
   const [pickRole, setPickRole] = useState<SpaceRoleName>("coder");
   const [busy, setBusy] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
 
-  // The API re-checks every call; these flags only decide what renders.
   const [myRole, setMyRole] = useState<SpaceRoleName | null>(null);
   const canCreateProject = usePermission("projects:create", myRole);
   const canManageMembers = usePermission("members:manage", myRole);
-
   const [title, setTitle] = useState(label);
+
   const load = useCallback(async () => {
     try {
       const [ps, ms, me] = await Promise.all([api.spaceProjects(spaceId), api.members(spaceId), api.me()]);
       setTitle(me.spaces.find((sp) => sp.id === spaceId)?.name ?? label);
       setProjects(ps);
       setMembers(ms);
-      setMyRole((me.spaces.find((s) => s.id === spaceId)?.role as SpaceRoleName | undefined) ?? null);
+      setMyRole((me.spaces.find((sp) => sp.id === spaceId)?.role as SpaceRoleName | undefined) ?? null);
     } catch (e) { setError(e instanceof Error ? e.message : "Failed to load this space."); }
     try { setUsers(await api.adminUsers()); } catch { /* picker list is admin-only; members still load */ }
-  }, [spaceId]);
+  }, [spaceId, label]);
   useEffect(() => { void load(); }, [load]);
+
+  const issueTotal = (projects ?? []).reduce((n, pr) => n + pr.open_findings, 0);
+  const milestoneTotal = (projects ?? []).reduce((n, pr) => n + pr.milestones, 0);
 
   return (
     <section aria-labelledby="space-title">
       <Button variant="ghost" size="sm" onClick={() => go({ name: "spaces" })}>← All spaces</Button>
-      <div className="mt-2 flex flex-wrap items-center gap-3">
-        <Avatar name={title || label} />
-        <h2 id="space-title" className="font-serif text-3xl font-bold">{title || label}</h2>
-        {myRole && <Badge tone={myRole === "owner" ? "primary" : "neutral"}>You are {myRole}</Badge>}
+
+      <div className="mt-3 flex flex-wrap items-start gap-4">
+        <span className="flex items-center gap-3">
+          <Avatar name={title || label} />
+          <span>
+            <span className="flex flex-wrap items-center gap-2">
+              <h2 id="space-title" className="font-serif text-3xl font-bold leading-tight">{title || label}</h2>
+              {myRole && <Badge tone={myRole === "owner" ? "primary" : "neutral"}>You are {myRole}</Badge>}
+              <Badge tone={issueTotal === 0 ? "success" : "danger"}>{issueTotal === 0 ? "✓ Healthy" : `${issueTotal} open issues`}</Badge>
+            </span>
+            <span className="mt-0.5 block text-sm text-text-muted">Projects, people and health for this space.</span>
+          </span>
+        </span>
+        <span className="ml-auto flex flex-wrap gap-2">
+          {canManageMembers && (
+            <Button variant="secondary" aria-expanded={showMembers} onClick={() => setShowMembers((v) => !v)}>
+              {showMembers ? "Close members" : "Manage members"}
+            </Button>
+          )}
+          {canCreateProject && (
+            <Button aria-expanded={showCreate} onClick={() => setShowCreate((v) => !v)}>
+              {showCreate ? "Close" : "+ New project"}
+            </Button>
+          )}
+        </span>
       </div>
+
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Space totals">
+        {[
+          ["Projects", projects?.length ?? "—"],
+          ["Milestones", projects ? milestoneTotal : "—"],
+          ["Members", members.length || "—"],
+          ["Open issues", projects ? issueTotal : "—"],
+        ].map(([k, v]) => (
+          <div key={k} className="rounded-lg border border-border bg-surface px-4 py-3 shadow-surface">
+            <p className="font-serif text-2xl font-bold leading-none">{v}</p>
+            <p className="mt-1.5 text-xs text-text-muted">{k}</p>
+          </div>
+        ))}
+      </div>
+
       {error && <div className="mt-4"><Alert>{error}</Alert></div>}
 
-      <h3 className="mt-8 font-serif text-xl font-bold">Projects</h3>
-      {projects === null && !error && <div className="mt-3 space-y-2"><Skeleton className="h-16" /><Skeleton className="h-16" /></div>}
-      {projects !== null && projects.length > 0 && (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => go({ name: "project", id: p.id })}
-              className="group rounded-lg border border-border bg-surface p-4 text-left shadow-surface transition duration-normal ease-standard hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.99]"
-            >
-              <span className="flex items-center gap-2">
-                <span className="font-medium">{p.name}</span>
-                {p.open_findings > 0 && <Badge tone="danger">{p.open_findings} to fix</Badge>}
-                <span aria-hidden className="ml-auto text-primary opacity-0 transition duration-fast group-hover:opacity-100">→</span>
-              </span>
-              <span className="mt-1 block text-sm text-text-muted">{p.milestones} milestones</span>
-            </button>
-          ))}
-        </div>
-      )}
-      {projects !== null && projects.length === 0 && (
-        <div className="mt-3"><EmptyState title="No projects yet" hint={canCreateProject ? "Create the first one below." : "Owners and Coders can create projects here."} /></div>
-      )}
-
-      {canCreateProject && (
-        <form className="mt-4 flex max-w-md gap-2" onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          try { const r = await api.createProject(spaceId, projName); toast.success("Project created."); go({ name: "project", id: r.id }); }
-          catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the project."); }
-          finally { setBusy(false); }
-        }}>
-          <Input placeholder="New project name" value={projName} onChange={(e) => setProjName(e.target.value)} required aria-label="Project name" />
-          <Button type="submit" busy={busy}>Create project</Button>
-        </form>
-      )}
-
-      <h3 className="mt-10 font-serif text-xl font-bold">Who can do what here</h3>
-      <p className="mt-1 text-sm text-text-muted">Owner: everything, including members. Coder: create projects and push milestones. Reader: look only.</p>
-      {members.length > 0 ? (
-        <ul className="mt-3 divide-y divide-border rounded-lg border border-border bg-surface shadow-surface">
-          {members.map((m, i) => (
-            <li key={i} className="flex min-h-11 items-center gap-2 px-4 py-2.5 text-sm">
-              <Avatar name={m.label} size="sm" />
-              <span className="font-medium">{m.label}</span>
-              <Badge>{m.principal_kind}</Badge>
-              <span className="ml-auto"><Badge tone={m.role === "owner" ? "primary" : "neutral"}>{m.role}</Badge></span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="mt-3"><EmptyState title="No members listed" hint="Give someone a role below." /></div>
-      )}
-
-      {canManageMembers && (
-        <Card className="mt-4 p-4">
-          <p className="text-sm font-medium">Give a role</p>
-          <form className="mt-2 flex max-w-lg flex-wrap gap-2" onSubmit={async (e) => {
+      {canCreateProject && showCreate && (
+        <Card className="vf-page mt-5 p-5">
+          <div className="flex items-start gap-3">
+            <div>
+              <h3 className="font-medium">Create a project</h3>
+              <p className="mt-0.5 text-sm text-text-muted">Milestones, scans and forks will live here.</p>
+            </div>
+            <span className="ml-auto"><Button variant="ghost" size="sm" onClick={() => setShowCreate(false)}>Cancel</Button></span>
+          </div>
+          <form className="mt-3 flex max-w-md gap-2" onSubmit={async (e) => {
             e.preventDefault();
-            try { await api.addMember(spaceId, { principal_kind: "user", principal_id: pickUser, role: pickRole }); await load(); toast.success("Role saved."); }
-            catch (err) { toast.error(err instanceof Error ? err.message : "Could not save the role."); }
+            setBusy(true);
+            try { const r = await api.createProject(spaceId, projName); toast.success("Project created."); go({ name: "project", id: r.id }); }
+            catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the project."); }
+            finally { setBusy(false); }
           }}>
-            <Select value={pickUser} onChange={(e) => setPickUser(e.target.value)} required aria-label="Person">
-              <option value="">Choose a person…</option>
-              {users.map((u) => <option key={u.id} value={u.id}>{u.display_name} ({u.email})</option>)}
-            </Select>
-            <Select value={pickRole} onChange={(e) => setPickRole(e.target.value as SpaceRoleName)} aria-label="Role">
-              <option value="owner">Owner</option>
-              <option value="coder">Coder</option>
-              <option value="reader">Reader</option>
-            </Select>
-            <Button type="submit">Give role</Button>
+            <Input autoFocus placeholder="Project name, e.g. Shop app" value={projName} onChange={(e) => setProjName(e.target.value)} required aria-label="Project name" />
+            <Button type="submit" busy={busy}>Create project</Button>
           </form>
-          <p className="mt-2 text-xs text-text-muted">Groups work the same way — an admin creates the group, then you give the group a role (API: principal_kind &quot;group&quot;).</p>
         </Card>
       )}
+
+      <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_340px]">
+        <div>
+          <h3 className="font-serif text-xl font-bold">Projects</h3>
+          {projects === null && !error && <div className="mt-3 grid gap-3 sm:grid-cols-2"><Skeleton className="h-44" /><Skeleton className="h-44" /></div>}
+          {projects !== null && projects.length > 0 && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {projects.map((pr) => (
+                <article key={pr.id} className="group rounded-lg border border-border bg-surface shadow-surface transition duration-normal ease-standard hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-raised">
+                  <button
+                    type="button"
+                    onClick={() => go({ name: "project", id: pr.id })}
+                    className="flex w-full flex-col p-5 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.99]"
+                    aria-label={`Open project ${pr.name}`}
+                  >
+                    <span className="flex items-start gap-2">
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-serif text-lg font-bold leading-tight">{pr.name}</span>
+                        <span className="text-xs text-text-muted">/{pr.slug}</span>
+                      </span>
+                      <Badge tone={pr.open_findings === 0 ? "success" : "danger"}>{pr.open_findings === 0 ? "✓ Healthy" : `${pr.open_findings} to fix`}</Badge>
+                    </span>
+                    <span className="mt-3 grid grid-cols-3 divide-x divide-border rounded-md border border-border bg-background py-2.5 text-center">
+                      <span><span className="block font-serif text-base font-bold leading-none">{pr.milestones}</span><span className="mt-1 block text-[11px] text-text-muted">Milestones</span></span>
+                      <span><span className="block font-serif text-base font-bold leading-none">{pr.vulnerabilities}</span><span className="mt-1 block text-[11px] text-text-muted">Vulns</span></span>
+                      <span><span className="block font-serif text-base font-bold leading-none">{pr.open_findings}</span><span className="mt-1 block text-[11px] text-text-muted">Issues</span></span>
+                    </span>
+                    <span className="mt-3 flex flex-wrap gap-1.5">
+                      {pr.languages.length > 0 ? pr.languages.map((l) => <Badge key={l} tone="primary">{l}</Badge>) : <Badge>No languages yet</Badge>}
+                    </span>
+                    <span className="mt-3 flex items-center border-t border-border pt-3 text-xs text-text-muted">
+                      <span>{pr.last_activity ? `Last activity ${new Date(pr.last_activity).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}` : "No milestones yet"}</span>
+                      <span aria-hidden className="ml-auto text-sm font-medium text-primary opacity-0 transition duration-fast group-hover:opacity-100">Open →</span>
+                    </span>
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+          {projects !== null && projects.length === 0 && (
+            <div className="mt-3"><EmptyState title="No projects yet" hint={canCreateProject ? "Create the first one with New project." : "Owners and Coders can create projects here."} /></div>
+          )}
+        </div>
+
+        <aside aria-labelledby="members-title">
+          <h3 id="members-title" className="font-serif text-xl font-bold">Members &amp; roles</h3>
+          <div className="mt-3 flex flex-wrap gap-1.5" aria-label="What each role can do">
+            <Badge tone="primary">Owner · everything</Badge>
+            <Badge>Coder · push &amp; create</Badge>
+            <Badge>Reader · view only</Badge>
+          </div>
+          {members.length > 0 ? (
+            <ul className="mt-3 divide-y divide-border rounded-lg border border-border bg-surface shadow-surface">
+              {members.map((m, i) => (
+                <li key={i} className="flex min-h-12 items-center gap-2.5 px-4 py-2.5 text-sm">
+                  <Avatar name={m.label} size="sm" />
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium leading-tight">{m.label}</span>
+                    <span className="text-xs capitalize text-text-muted">{m.principal_kind}</span>
+                  </span>
+                  <span className="ml-auto"><Badge tone={m.role === "owner" ? "primary" : "neutral"}>{m.role}</Badge></span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="mt-3"><EmptyState title="No members listed" hint={canManageMembers ? "Use Manage members to give the first role." : "A Space Owner manages members."} /></div>
+          )}
+
+          {canManageMembers && showMembers && (
+            <Card className="vf-page mt-4 p-4">
+              <p className="text-sm font-medium">Give a role</p>
+              <p className="mt-0.5 text-xs text-text-muted">Applies instantly. Groups inherit the same way (API: principal_kind “group”).</p>
+              <form className="mt-3 grid gap-2" onSubmit={async (e) => {
+                e.preventDefault();
+                try { await api.addMember(spaceId, { principal_kind: "user", principal_id: pickUser, role: pickRole }); await load(); toast.success("Role saved."); }
+                catch (err) { toast.error(err instanceof Error ? err.message : "Could not save the role."); }
+              }}>
+                <Select value={pickUser} onChange={(e) => setPickUser(e.target.value)} required aria-label="Person" className="w-full">
+                  <option value="">Choose a person…</option>
+                  {users.map((u) => <option key={u.id} value={u.id}>{u.display_name} ({u.email})</option>)}
+                </Select>
+                <Select value={pickRole} onChange={(e) => setPickRole(e.target.value as SpaceRoleName)} aria-label="Role" className="w-full">
+                  <option value="owner">Owner — everything</option>
+                  <option value="coder">Coder — push &amp; create</option>
+                  <option value="reader">Reader — view only</option>
+                </Select>
+                <Button type="submit">Give role</Button>
+              </form>
+            </Card>
+          )}
+        </aside>
+      </div>
     </section>
   );
 }
@@ -600,7 +746,7 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button aria-expanded={showPush} onClick={() => setShowPush((v) => !v)}>
-          {showPush ? "Close" : "＋ Push milestone"}
+          {showPush ? "Close" : "+ Push milestone"}
         </Button>
         <span className="text-sm text-text-muted">Saves a new scanned version — History below is never overwritten.</span>
       </div>
@@ -744,6 +890,7 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
           { key: "fix", label: "Fix it" },
           { key: "files", label: `Files (${data.files.length})` },
           { key: "todos", label: `To-dos & gaps (${data.todos.length})` },
+          { key: "sbom", label: `SBOM (${data.sbom?.total ?? 0})` },
           { key: "shots", label: `Screenshots (${shots.length})` },
         ]}
       />
@@ -759,6 +906,13 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
                       <span className="font-medium">{f.plain_title}</span>
                     </span>
                     <p className="mt-1.5 text-sm text-text-muted">{f.plain_explain}</p>
+                    {(f.cve_id || f.cvss_score != null || f.fixed_version) && (
+                      <p className="mt-2 flex flex-wrap gap-1.5">
+                        {f.cve_id && <Badge>{f.cve_id}</Badge>}
+                        {cvssLabel(f.cvss_score) && <Badge tone={f.cvss_score != null && f.cvss_score >= 7 ? "danger" : "warning"}>{cvssLabel(f.cvss_score)}</Badge>}
+                        {f.package && <Badge tone="primary">{f.package} {f.current_version ?? ""}{f.fixed_version ? ` → ${f.fixed_version}` : ""}</Badge>}
+                      </p>
+                    )}
                     {f.file_path && <p className="mt-1 text-xs text-text-muted">In {f.file_path}</p>}
                   </Card>
                 </li>
@@ -773,7 +927,16 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
               {open.map((f) => (
                 <li key={f.id}>
                   <Card className="p-4">
-                    <span className="font-medium">{f.plain_title}</span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{f.plain_title}</span>
+                      {cvssLabel(f.cvss_score) && <Badge tone={f.cvss_score != null && f.cvss_score >= 7 ? "danger" : "warning"}>{cvssLabel(f.cvss_score)}</Badge>}
+                    </span>
+                    {f.package && (
+                      <p className="mt-1 text-sm text-text-muted">
+                        {f.package}: <strong>{f.current_version ?? "?"}</strong>
+                        {f.fixed_version ? <> → update to <strong>{f.fixed_version}</strong> or later</> : <> — no fixed version published yet</>}
+                      </p>
+                    )}
                     <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-background p-3 text-xs">{f.fix_text}</pre>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <CopyButton text={f.fix_text} label="Copy fix" />
@@ -838,6 +1001,8 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
           </Card>
         )}
 
+        {tab === "sbom" && <SbomPanel milestoneId={milestoneId} sbom={data.sbom} />}
+
         {tab === "shots" && (
           <Card className="p-4">
             <p className="text-sm text-text-muted">Base a milestone on how it looks. Attach a screenshot — History keeps it with this milestone.</p>
@@ -880,6 +1045,57 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
         </form>
       </Card>
     </div>
+  );
+}
+
+function SbomPanel({ milestoneId, sbom }: { milestoneId: string; sbom: MileData["sbom"] }) {
+  const [query, setQuery] = useState("");
+  const toast = useToast();
+  const packages = sbom?.packages ?? [];
+  const visible = packages.filter((pkg) =>
+    `${pkg.name} ${pkg.version} ${pkg.ecosystem ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
+  if (!sbom || sbom.total === 0) {
+    return <EmptyState title="No SBOM for this milestone" hint="Push again — every new milestone generates a Syft SBOM (SBOM.json) automatically." />;
+  }
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div>
+          <p className="font-medium">Software bill of materials (Syft)</p>
+          <p className="text-sm text-text-muted">{sbom.total} packages · generated by {sbom.tool} · this list is exactly what OSV checked for vulnerabilities.</p>
+        </div>
+        <span className="ml-auto flex flex-wrap gap-2">
+          <Input type="search" placeholder="Search packages…" aria-label="Search SBOM packages" value={query} onChange={(e) => setQuery(e.target.value)} className="w-52" />
+          <Button onClick={async () => {
+            try { await api.downloadSbom(milestoneId); toast.success("SBOM.json downloaded."); }
+            catch (err) { toast.error(err instanceof Error ? err.message : "Download failed."); }
+          }}>Download SBOM.json</Button>
+        </span>
+      </div>
+      <div className="mt-3 max-h-96 overflow-auto rounded-md border border-border">
+        <table className="w-full text-left text-sm">
+          <thead className="sticky top-0 bg-background">
+            <tr>
+              <th className="px-3 py-2 font-medium">Package</th>
+              <th className="px-3 py-2 font-medium">Version</th>
+              <th className="px-3 py-2 font-medium">Ecosystem</th>
+              <th className="px-3 py-2 font-medium">PURL</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {visible.map((pkg, i) => (
+              <tr key={`${pkg.purl}-${i}`} className="transition duration-fast hover:bg-background">
+                <td className="px-3 py-2 font-medium">{pkg.name}</td>
+                <td className="px-3 py-2">{pkg.version}</td>
+                <td className="px-3 py-2"><Badge>{pkg.ecosystem ?? pkg.type}</Badge></td>
+                <td className="max-w-64 truncate px-3 py-2 font-mono text-xs text-text-muted" title={pkg.purl}>{pkg.purl}</td>
+              </tr>
+            ))}
+            {visible.length === 0 && <tr><td colSpan={4} className="px-3 py-4 text-text-muted">No packages match that search.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
