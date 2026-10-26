@@ -86,6 +86,11 @@ function Shell() {
   const [me, setMe] = useState<Me | null>(null);
   const [view, setViewState] = useState<View>(() => parsePath(window.location.pathname));
   const toast = useToast();
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("vf_side_collapsed") === "1");
+  const [sideW, setSideW] = useState(() => {
+    const v = Number(localStorage.getItem("vf_side_w"));
+    return v >= 200 && v <= 420 ? v : 264;
+  });
 
   const setView = useCallback((v: View, replace = false) => {
     const path = toPath(v);
@@ -140,94 +145,231 @@ function Shell() {
     setMe(null);
   };
 
+  const toggleCollapsed = () => {
+    setCollapsed((v) => {
+      localStorage.setItem("vf_side_collapsed", v ? "0" : "1");
+      return !v;
+    });
+  };
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sideW;
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.min(420, Math.max(200, startW + ev.clientX - startX));
+      setSideW(next);
+      localStorage.setItem("vf_side_w", String(next));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
     <PermissionsProvider value={perms}>
-      <div className="min-h-screen bg-background text-text">
-        <header className="sticky top-0 z-sticky border-b border-border bg-surface/95 shadow-surface backdrop-blur">
-          <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-2.5">
-            <button
-              type="button"
-              onClick={() => setView({ name: "spaces" })}
-              className="flex items-center gap-2.5 rounded-md px-1 py-1 text-left transition duration-fast ease-standard hover:bg-background focus-visible:outline-2 focus-visible:outline-primary"
-            >
-              <span aria-hidden className="flex h-9 w-9 items-center justify-center rounded-md bg-primary font-serif text-lg font-bold text-primary-fg">V</span>
-              <span>
-                <span className="block font-serif text-lg font-bold leading-tight">VibeForge</span>
-                <span className="hidden text-xs leading-tight text-text-muted sm:block">Milestones, not git</span>
+      <div className="flex min-h-screen bg-background text-text">
+        {/* Left navigation — collapsible + drag-resizable (persisted) */}
+        <aside
+          aria-label="Left navigation"
+          style={collapsed ? undefined : { width: sideW }}
+          className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-border bg-surface lg:relative lg:flex ${collapsed ? "w-16" : ""}`}
+        >
+          <button
+            type="button"
+            onClick={() => setView({ name: "spaces" })}
+            className="flex items-center gap-2.5 border-b border-border px-4 py-3.5 text-left transition duration-fast hover:bg-background focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary font-serif text-lg font-bold text-primary-fg">V</span>
+            {!collapsed && (
+              <span className="min-w-0">
+                <span className="block truncate font-serif text-lg font-bold leading-tight">VibeForge</span>
+                <span className="block text-xs leading-tight text-text-muted">Milestones, not git</span>
               </span>
-            </button>
+            )}
+          </button>
 
-            <nav aria-label="Main" className="ml-4 hidden items-center gap-1 sm:flex">
-              <Button variant={view.name === "spaces" || view.name === "space" || view.name === "project" ? "secondary" : "ghost"} size="sm" onClick={() => setView({ name: "spaces" })}>
-                Spaces
-              </Button>
-            </nav>
-
-            <div className="ml-auto flex items-center gap-2">
-              {perms.isAdmin && (
-                <Button
-                  size="sm"
-                  aria-label="Create a new space"
-                  onClick={() => {
-                    setView({ name: "spaces" });
-                    window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
-                  }}
-                >
-                  + New space
-                </Button>
-              )}
-              {/* Single Settings entry (admins): one button, tabbed page inside. */}
-              {perms.isAdmin && (
-                <Button
-                  variant={view.name === "admin" ? "secondary" : "ghost"}
-                  size="sm"
-                  aria-label="Settings and admin"
-                  aria-current={view.name === "admin" || undefined}
-                  onClick={() => setView({ name: "admin", tab: "vulns" })}
-                >
-                  <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                  </svg>
-                  Settings
-                </Button>
-              )}
-
-              {/* Everything account-related lives under this one menu. */}
-              <Menu label="Profile menu" button={<span className="flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-3 shadow-surface transition duration-fast hover:bg-background"><Avatar name={me.user.display_name} size="sm" /><span className="max-w-36 truncate text-sm font-medium">{me.user.display_name}</span><span aria-hidden className="text-xs text-text-muted">▾</span></span>}>
-                {(close) => (
-                  <>
-                    <div className="px-3 py-2">
-                      <p className="truncate text-sm font-medium">{me.user.display_name}</p>
-                      <p className="truncate text-xs text-text-muted">{me.user.email}</p>
-                      {me.user.is_platform_admin && <span className="mt-1 inline-block"><Badge tone="primary">Admin</Badge></span>}
-                    </div>
-                    <div className="my-1 border-t border-border" />
-                    <MenuItem onClick={() => { close(); setView({ name: "profile" }); }}>Profile &amp; skill install</MenuItem>
-                    <MenuItem onClick={() => { close(); setView({ name: "profile" }); }}>API tokens</MenuItem>
-                    {me.user.is_platform_admin && (
-                      <MenuItem onClick={() => { close(); setView({ name: "admin", tab: "settings" }); }}>App settings</MenuItem>
-                    )}
-                    <div className="my-1 border-t border-border" />
-                    <MenuItem danger onClick={() => { close(); signOut(); }}>Sign out</MenuItem>
-                  </>
-                )}
-              </Menu>
+          <nav aria-label="Spaces and settings" className="flex-1 overflow-y-auto p-2">
+            <SideItem collapsed={collapsed} active={view.name !== "admin" && view.name !== "profile"} label="All spaces" icon="▦" onClick={() => setView({ name: "spaces" })} />
+            {!collapsed && <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>}
+            <div className="space-y-0.5">
+              {me.spaces.map((sp) => (
+                <SideItem
+                  key={sp.id}
+                  collapsed={collapsed}
+                  active={(view.name === "space" && view.id === sp.id) || (view.name === "project" && false)}
+                  label={sp.name}
+                  icon={sp.name.slice(0, 1).toUpperCase()}
+                  hint={collapsed ? sp.name : `${sp.role}`}
+                  onClick={() => setView({ name: "space", id: sp.id, label: sp.name })}
+                />
+              ))}
             </div>
-          </div>
-        </header>
+            {perms.isAdmin && (
+              <SideItem
+                collapsed={collapsed}
+                active={false}
+                label="New space"
+                icon="+"
+                onClick={() => {
+                  setView({ name: "spaces" });
+                  window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
+                }}
+              />
+            )}
 
-        <main className="mx-auto max-w-6xl px-4 py-6">
-          <div key={view.name + ("id" in view ? view.id : "")} className="vf-page">
-            {view.name === "spaces" && <Spaces me={me} go={setView} />}
-            {view.name === "space" && <SpaceDetail spaceId={view.id} label={view.label} go={setView} />}
-            {view.name === "project" && <ProjectDetail projectId={view.id} milestoneId={view.milestoneId} go={setView} />}
-            {view.name === "profile" && <Profile />}
-            {view.name === "admin" && <Admin initialTab={view.tab} />}
+            {perms.isAdmin && (
+              <>
+                {!collapsed && <p className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Settings</p>}
+                {collapsed && <div className="my-3 border-t border-border" />}
+                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "vulns"} label="Vulnerabilities" icon="!" onClick={() => setView({ name: "admin", tab: "vulns" })} />
+                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "people"} label="People & groups" icon="◉" onClick={() => setView({ name: "admin", tab: "people" })} />
+                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "settings"} label="App settings" icon="⚙" onClick={() => setView({ name: "admin", tab: "settings" })} />
+              </>
+            )}
+          </nav>
+
+          <div className="border-t border-border p-2">
+            <SideItem collapsed={collapsed} active={false} label={collapsed ? "Expand sidebar" : "Collapse sidebar"} icon={collapsed ? "»" : "«"} onClick={toggleCollapsed} />
           </div>
-        </main>
+
+          {!collapsed && (
+            <div
+              role="separator"
+              aria-label="Resize sidebar"
+              aria-orientation="vertical"
+              onMouseDown={startResize}
+              className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize transition duration-fast hover:bg-primary/40"
+            />
+          )}
+        </aside>
+
+        <div className="min-w-0 flex-1">
+          {/* Top nav: search + profile only */}
+          <header className="sticky top-0 z-sticky border-b border-border bg-surface/95 shadow-surface backdrop-blur">
+            <div className="flex items-center gap-3 px-4 py-2.5">
+              <button
+                type="button"
+                onClick={() => setView({ name: "spaces" })}
+                aria-label="VibeForge home"
+                className="flex h-9 w-9 items-center justify-center rounded-md bg-primary font-serif text-lg font-bold text-primary-fg transition duration-fast hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-primary lg:hidden"
+              >
+                V
+              </button>
+              <GlobalSearch go={setView} spaces={me.spaces} />
+              <div className="ml-auto">
+                <Menu label="Profile menu" button={<span className="flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-3 shadow-surface transition duration-fast hover:bg-background"><Avatar name={me.user.display_name} size="sm" /><span className="max-w-36 truncate text-sm font-medium">{me.user.display_name}</span><span aria-hidden className="text-xs text-text-muted">▾</span></span>}>
+                  {(close) => (
+                    <>
+                      <div className="px-3 py-2">
+                        <p className="truncate text-sm font-medium">{me.user.display_name}</p>
+                        <p className="truncate text-xs text-text-muted">{me.user.email}</p>
+                        {me.user.is_platform_admin && <span className="mt-1 inline-block"><Badge tone="primary">Admin</Badge></span>}
+                      </div>
+                      <div className="my-1 border-t border-border" />
+                      <MenuItem onClick={() => { close(); setView({ name: "profile" }); }}>Profile &amp; skill install</MenuItem>
+                      <MenuItem onClick={() => { close(); setView({ name: "profile" }); }}>API tokens</MenuItem>
+                      {me.user.is_platform_admin && (
+                        <MenuItem onClick={() => { close(); setView({ name: "admin", tab: "settings" }); }}>App settings</MenuItem>
+                      )}
+                      <div className="my-1 border-t border-border" />
+                      <MenuItem danger onClick={() => { close(); signOut(); }}>Sign out</MenuItem>
+                    </>
+                  )}
+                </Menu>
+              </div>
+            </div>
+          </header>
+
+          <main className="mx-auto w-full max-w-6xl px-4 py-6">
+            <div key={view.name + ("id" in view ? view.id : "")} className="vf-page">
+              {view.name === "spaces" && <Spaces me={me} go={setView} />}
+              {view.name === "space" && <SpaceDetail spaceId={view.id} label={view.label} go={setView} />}
+              {view.name === "project" && <ProjectDetail projectId={view.id} milestoneId={view.milestoneId} go={setView} />}
+              {view.name === "profile" && <Profile />}
+              {view.name === "admin" && <Admin initialTab={view.tab} />}
+            </div>
+          </main>
+        </div>
       </div>
     </PermissionsProvider>
+  );
+}
+
+function SideItem({
+  collapsed, active, label, icon, hint, onClick,
+}: {
+  collapsed: boolean; active: boolean; label: string; icon: string; hint?: string; onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={collapsed ? label : undefined}
+      aria-current={active || undefined}
+      onClick={onClick}
+      className={`flex min-h-10 w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm transition duration-fast ease-standard focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.99] ${
+        active ? "bg-primary/10 font-medium text-primary" : "text-text hover:bg-background"
+      } ${collapsed ? "justify-center px-0" : ""}`}
+    >
+      <span aria-hidden className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-background text-xs font-bold">{icon}</span>
+      {!collapsed && <span className="min-w-0 flex-1 truncate text-left">{label}</span>}
+      {!collapsed && hint && <span className="text-[11px] capitalize text-text-muted">{hint}</span>}
+    </button>
+  );
+}
+
+function GlobalSearch({ go, spaces }: { go: (v: View) => void; spaces: Me["spaces"] }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [projects, setProjects] = useState<Awaited<ReturnType<typeof api.myProjects>>>([]);
+  useEffect(() => { void api.myProjects().then(setProjects).catch(() => {}); }, []);
+
+  const q = query.trim().toLowerCase();
+  const spaceHits = q ? spaces.filter((sp) => sp.name.toLowerCase().includes(q)).slice(0, 5) : [];
+  const projectHits = q ? projects.filter((pr) => pr.name.toLowerCase().includes(q)).slice(0, 6) : [];
+  const hasHits = spaceHits.length + projectHits.length > 0;
+
+  return (
+    <div className="relative w-full max-w-xl">
+      <span aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-muted">⌕</span>
+      <Input
+        type="search"
+        value={query}
+        placeholder="Search spaces and projects…"
+        aria-label="Search spaces and projects"
+        className="pl-9"
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+          if (e.key === "Enter" && projectHits[0]) { go({ name: "project", id: projectHits[0].id }); setOpen(false); }
+          else if (e.key === "Enter" && spaceHits[0]) { go({ name: "space", id: spaceHits[0].id, label: spaceHits[0].name }); setOpen(false); }
+        }}
+      />
+      {open && q && (
+        <div role="listbox" aria-label="Search results" className="vf-pop absolute left-0 right-0 top-[calc(100%+6px)] z-dropdown overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-overlay">
+          {!hasHits && <p className="px-3 py-3 text-sm text-text-muted">No spaces or projects match “{query}”.</p>}
+          {spaceHits.map((sp) => (
+            <button key={sp.id} type="button" role="option" aria-selected="false"
+              className="flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left text-sm transition duration-fast hover:bg-background focus-visible:outline-2 focus-visible:outline-primary"
+              onClick={() => { go({ name: "space", id: sp.id, label: sp.name }); setOpen(false); setQuery(""); }}>
+              <Avatar name={sp.name} size="sm" /><span className="font-medium">{sp.name}</span><Badge>Space</Badge>
+            </button>
+          ))}
+          {projectHits.map((pr) => (
+            <button key={pr.id} type="button" role="option" aria-selected="false"
+              className="flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left text-sm transition duration-fast hover:bg-background focus-visible:outline-2 focus-visible:outline-primary"
+              onClick={() => { go({ name: "project", id: pr.id }); setOpen(false); setQuery(""); }}>
+              <ProjectFavicon projectId={pr.id} name={pr.name} /><span className="font-medium">{pr.name}</span><Badge tone="primary">Project</Badge>
+              <span className="ml-auto text-xs text-text-muted">{pr.milestones} milestones</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -463,6 +605,25 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
   );
 }
 
+function ProjectFavicon({ projectId, name }: { projectId: string; name: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    let objectUrl: string | null = null;
+    void api.faviconUrl(projectId).then((u) => {
+      objectUrl = u;
+      if (live) setUrl(u);
+    });
+    return () => { live = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [projectId]);
+  if (!url) return <Avatar name={name} />;
+  return (
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
+      <img src={url} alt={`${name} icon`} className="h-full w-full object-contain" />
+    </span>
+  );
+}
+
 function SpaceDetail({ spaceId, label, go }: { spaceId: string; label: string; go: (v: View) => void }) {
   const [projects, setProjects] = useState<Awaited<ReturnType<typeof api.spaceProjects>> | null>(null);
   const [members, setMembers] = useState<Awaited<ReturnType<typeof api.members>>>([]);
@@ -583,7 +744,10 @@ function SpaceDetail({ spaceId, label, go }: { spaceId: string; label: string; g
                         <span className="block truncate font-serif text-lg font-bold leading-tight">{pr.name}</span>
                         <span className="text-xs text-text-muted">/{pr.slug}</span>
                       </span>
-                      <Badge tone={pr.open_findings === 0 ? "success" : "danger"}>{pr.open_findings === 0 ? "✓ Healthy" : `${pr.open_findings} to fix`}</Badge>
+                      <span className="flex shrink-0 flex-col items-end gap-1.5">
+                        <ProjectFavicon projectId={pr.id} name={pr.name} />
+                        <Badge tone={pr.open_findings === 0 ? "success" : "danger"}>{pr.open_findings === 0 ? "✓ Healthy" : `${pr.open_findings} to fix`}</Badge>
+                      </span>
                     </span>
                     <span className="mt-3 grid grid-cols-3 divide-x divide-border rounded-md border border-border bg-background py-2.5 text-center">
                       <span><span className="block font-serif text-base font-bold leading-none">{pr.milestones}</span><span className="mt-1 block text-[11px] text-text-muted">Milestones</span></span>
@@ -1067,9 +1231,17 @@ function SbomPanel({ milestoneId, sbom }: { milestoneId: string; sbom: MileData[
         <span className="ml-auto flex flex-wrap gap-2">
           <Input type="search" placeholder="Search packages…" aria-label="Search SBOM packages" value={query} onChange={(e) => setQuery(e.target.value)} className="w-52" />
           <Button onClick={async () => {
-            try { await api.downloadSbom(milestoneId); toast.success("SBOM.json downloaded."); }
+            try { await api.downloadSbom(milestoneId); toast.success("SBOM.json (Syft) downloaded."); }
             catch (err) { toast.error(err instanceof Error ? err.message : "Download failed."); }
-          }}>Download SBOM.json</Button>
+          }}>Syft JSON</Button>
+          <Button variant="secondary" onClick={async () => {
+            try { await api.downloadExport(milestoneId, "cyclonedx"); toast.success("CycloneDX SBOM downloaded."); }
+            catch (err) { toast.error(err instanceof Error ? err.message : "Download failed."); }
+          }}>CycloneDX</Button>
+          <Button variant="secondary" onClick={async () => {
+            try { await api.downloadExport(milestoneId, "spdx"); toast.success("SPDX SBOM downloaded."); }
+            catch (err) { toast.error(err instanceof Error ? err.message : "Download failed."); }
+          }}>SPDX</Button>
         </span>
       </div>
       <div className="mt-3 max-h-96 overflow-auto rounded-md border border-border">
