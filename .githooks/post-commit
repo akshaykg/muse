@@ -1,0 +1,19 @@
+#!/bin/sh
+# VibeForge: push every commit to its upstream right away.
+# Installed via: git config core.hooksPath .githooks   (see scripts/auto-commit-push.sh)
+# A failed push never fails the commit — it prints what to run by hand.
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
+[ -n "$branch" ] || exit 0
+
+if ! git rev-parse --abbrev-ref "$branch@{upstream}" >/dev/null 2>&1; then
+  echo "post-commit: no upstream for '$branch' yet — run: git push -u origin $branch"
+  exit 0
+fi
+
+if git push 2>&1; then
+  echo "post-commit: pushed $branch"
+else
+  echo "post-commit: push failed (commit is safe locally) — run: git push"
+fi
+exit 0

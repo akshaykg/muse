@@ -288,7 +288,7 @@ async fn list_spaces(State(state): State<Shared>, headers: HeaderMap) -> Respons
         space_role(&store, &a.0, &sp.id).map(|role| {
             let project_ids: Vec<&String> = store.projects.values().filter(|p| p.space_id == sp.id).map(|p| &p.id).collect();
             let space_milestones: Vec<&Milestone> = store.milestones.values().filter(|m| project_ids.contains(&&m.project_id)).collect();
-            let open: Vec<&&Finding> = store.findings.values().filter(|f| f.status == "open"
+            let open: Vec<&Finding> = store.findings.values().filter(|f| f.status == "open"
                 && store.milestones.get(&f.milestone_id).map(|m| project_ids.contains(&&m.project_id)).unwrap_or(false)).collect();
             serde_json::json!({
                 "id": sp.id, "slug": sp.slug, "name": sp.name, "role": role,
