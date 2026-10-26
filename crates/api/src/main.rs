@@ -1097,7 +1097,17 @@ async fn main() {
     }
     let port: u16 = std::env::var("PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8080);
     let app = app.with_state(state);
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await.unwrap();
+    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            eprintln!("vibeforge is already running on http://localhost:{port} — open that instead, or stop it first (lsof -ti :{port} | xargs kill).");
+            return;
+        }
+        Err(e) => {
+            eprintln!("could not start vibeforge on port {port}: {e}");
+            return;
+        }
+    };
     println!("vibeforge listening on http://localhost:{port}  data={}", data_dir.display());
     axum::serve(listener, app).await.unwrap();
 }
