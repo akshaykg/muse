@@ -285,10 +285,21 @@ async fn list_spaces(State(state): State<Shared>, headers: HeaderMap) -> Respons
     let a = auth!(&state, &headers);
     let store = state.store.read().await;
     let mut out: Vec<_> = store.spaces.values().filter_map(|sp| {
-        space_role(&store, &a.0, &sp.id).map(|role| serde_json::json!({
-            "id": sp.id, "slug": sp.slug, "name": sp.name, "role": role,
-            "projects": store.projects.values().filter(|p| p.space_id == sp.id).count()
-        }))
+        space_role(&store, &a.0, &sp.id).map(|role| {
+            let project_ids: Vec<&String> = store.projects.values().filter(|p| p.space_id == sp.id).map(|p| &p.id).collect();
+            let space_milestones: Vec<&Milestone> = store.milestones.values().filter(|m| project_ids.contains(&&m.project_id)).collect();
+            let open: Vec<&&Finding> = store.findings.values().filter(|f| f.status == "open"
+                && store.milestones.get(&f.milestone_id).map(|m| project_ids.contains(&&m.project_id)).unwrap_or(false)).collect();
+            serde_json::json!({
+                "id": sp.id, "slug": sp.slug, "name": sp.name, "role": role,
+                "projects": project_ids.len(),
+                "milestones": space_milestones.len(),
+                "members": store.members.iter().filter(|m| m.space_id == sp.id).count(),
+                "open_findings": open.len(),
+                "vulnerabilities": open.iter().filter(|f| f.kind == "cve").count(),
+                "last_activity": space_milestones.iter().map(|m| m.created_at.clone()).max()
+            })
+        })
     }).collect();
     out.sort_by(|x, y| x["name"].as_str().cmp(&y["name"].as_str()));
     Json(out).into_response()

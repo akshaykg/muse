@@ -208,6 +208,22 @@ pub struct JavaScanner;
 pub struct PhpScanner;
 pub struct RubyScanner;
 
+
+/// Manifests can live in subfolders (e.g. web/package.json in a monorepo),
+/// not only at the zip root. Search recursively, skipping vendored/build dirs.
+fn find_manifests(root: &Path, names: &[&str]) -> Vec<PathBuf> {
+    let skip = ["node_modules", "target", ".git", "dist", "vendor", ".next"];
+    walkdir::WalkDir::new(root).max_depth(6).into_iter().filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .filter(|p| {
+            let rel = rel_path(root, p);
+            if rel.split('/').any(|part| skip.contains(&part)) { return false; }
+            p.file_name().and_then(|n| n.to_str()).map(|n| names.contains(&n)).unwrap_or(false)
+        })
+        .collect()
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }
@@ -216,7 +232,8 @@ impl LangScanner for JsScanner {
     fn name(&self) -> &'static str { "JavaScript / TypeScript" }
     fn collect_deps(&self, root: &Path) -> Vec<Dep> {
         let mut out = Vec::new();
-        if let Some(v) = read_json(&root.join("package.json")) {
+        for manifest in find_manifests(root, &["package.json"]) {
+            let Some(v) = read_json(&manifest) else { continue };
             for sect in ["dependencies", "devDependencies"] {
                 if let Some(map) = v.get(sect).and_then(|s| s.as_object()) {
                     for (name, ver) in map {
@@ -261,7 +278,8 @@ impl LangScanner for PyScanner {
     fn name(&self) -> &'static str { "Python" }
     fn collect_deps(&self, root: &Path) -> Vec<Dep> {
         let mut out = Vec::new();
-        if let Ok(text) = std::fs::read_to_string(root.join("requirements.txt")) {
+        for manifest in find_manifests(root, &["requirements.txt"]) {
+        if let Ok(text) = std::fs::read_to_string(&manifest) {
             for line in text.lines() {
                 let line = line.trim();
                 if line.is_empty() || line.starts_with('#') { continue }
@@ -272,6 +290,7 @@ impl LangScanner for PyScanner {
                 }
             }
         }
+        }
         out
     }
 }
@@ -280,7 +299,8 @@ impl LangScanner for GoScanner {
     fn name(&self) -> &'static str { "Go" }
     fn collect_deps(&self, root: &Path) -> Vec<Dep> {
         let mut out = Vec::new();
-        if let Ok(text) = std::fs::read_to_string(root.join("go.mod")) {
+        for manifest in find_manifests(root, &["go.mod"]) {
+        if let Ok(text) = std::fs::read_to_string(&manifest) {
             let mut in_require = false;
             for line in text.lines() {
                 let t = line.trim();
@@ -293,6 +313,7 @@ impl LangScanner for GoScanner {
                 }
             }
         }
+        }
         out
     }
 }
@@ -302,11 +323,13 @@ impl LangScanner for JavaScanner {
     fn collect_deps(&self, root: &Path) -> Vec<Dep> {
         let mut out = Vec::new();
         // Maven pom.xml — lightweight extraction (no XML dep needed for v1).
-        if let Ok(text) = std::fs::read_to_string(root.join("pom.xml")) {
+        for manifest in find_manifests(root, &["pom.xml"]) {
+        if let Ok(text) = std::fs::read_to_string(&manifest) {
             let re = Regex::new(r"<dependency>\s*<groupId>([^<]+)</groupId>\s*<artifactId>([^<]+)</artifactId>\s*<version>([^<]+)</version>").unwrap();
             for c in re.captures_iter(&text) {
                 out.push(Dep { ecosystem: "Maven".into(), name: format!("{}:{}", &c[1], &c[2]), version: c[3].to_string() });
             }
+        }
         }
         out
     }
@@ -316,7 +339,8 @@ impl LangScanner for PhpScanner {
     fn name(&self) -> &'static str { "PHP" }
     fn collect_deps(&self, root: &Path) -> Vec<Dep> {
         let mut out = Vec::new();
-        if let Some(v) = read_json(&root.join("composer.json")) {
+        for manifest in find_manifests(root, &["composer.json"]) {
+        if let Some(v) = read_json(&manifest) {
             if let Some(map) = v.get("require").and_then(|s| s.as_object()) {
                 for (name, ver) in map {
                     if name == "php" { continue }
@@ -324,6 +348,7 @@ impl LangScanner for PhpScanner {
                     out.push(Dep { ecosystem: "Packagist".into(), name: name.clone(), version });
                 }
             }
+        }
         }
         out
     }
@@ -333,13 +358,15 @@ impl LangScanner for RubyScanner {
     fn name(&self) -> &'static str { "Ruby" }
     fn collect_deps(&self, root: &Path) -> Vec<Dep> {
         let mut out = Vec::new();
-        if let Ok(text) = std::fs::read_to_string(root.join("Gemfile.lock")) {
+        for manifest in find_manifests(root, &["Gemfile.lock"]) {
+        if let Ok(text) = std::fs::read_to_string(&manifest) {
             let re = Regex::new(r"^\s{4}([a-zA-Z0-9_\-]+) \(([^)]+)\)").unwrap();
             for line in text.lines() {
                 if let Some(c) = re.captures(line) {
                     out.push(Dep { ecosystem: "RubyGems".into(), name: c[1].to_string(), version: c[2].to_string() });
                 }
             }
+        }
         }
         out
     }
@@ -490,7 +517,7 @@ pub fn count_languages(root: &Path) -> Vec<String> {
         ("Go", "go.mod"), ("Rust", "Cargo.toml"), ("Java", "pom.xml"),
         ("PHP", "composer.json"), ("Ruby", "Gemfile.lock"),
     ];
-    checks.iter().filter(|(_, f)| root.join(f).exists()).map(|(n, _)| n.to_string()).collect()
+    checks.iter().filter(|(_, f)| !find_manifests(root, &[f]).is_empty()).map(|(n, _)| n.to_string()).collect()
 }
 
 #[cfg(test)]
@@ -532,6 +559,19 @@ mod tests {
         let files = extract_zip_safely(&zip, &dir, &limits()).unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!(collect_all_deps(&dir).len(), 1);
+    }
+
+    #[test]
+    fn finds_nested_node_manifest() {
+        let dir = std::env::temp_dir().join("vf-test-nested");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("web/src")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\\nname = \"x\"\\n").unwrap();
+        std::fs::write(dir.join("web/package.json"), br#"{"name":"web","dependencies":{"react":"19.1.0"}}"#).unwrap();
+        let langs = count_languages(&dir);
+        assert!(langs.iter().any(|l| l.contains("JavaScript")), "langs: {langs:?}");
+        assert!(langs.iter().any(|l| l == "Rust"), "langs: {langs:?}");
+        assert!(collect_all_deps(&dir).iter().any(|d| d.name == "react"));
     }
 
     #[test]

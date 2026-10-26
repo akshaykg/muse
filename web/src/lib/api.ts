@@ -34,7 +34,7 @@ export const api = {
   createToken: (name: string) =>
     req<{ id: string; token: string; note: string }>("/api/v1/me/tokens", { method: "POST", body: JSON.stringify({ name, scopes: ["read", "push"] }) }),
   revokeToken: (id: string) => req(`/api/v1/me/tokens/${id}`, { method: "DELETE" }),
-  spaces: () => req<{ id: string; slug: string; name: string; role: string; projects: number }[]>("/api/v1/spaces"),
+  spaces: () => req<{ id: string; slug: string; name: string; role: string; projects: number; milestones: number; members: number; open_findings: number; vulnerabilities: number; last_activity: string | null }[]>("/api/v1/spaces"),
   createSpace: (name: string) => req("/api/v1/spaces", { method: "POST", body: JSON.stringify({ name }) }),
   members: (spaceId: string) => req<{ principal_kind: string; principal_id: string; label: string; role: string }[]>(`/api/v1/spaces/${spaceId}/members`),
   addMember: (spaceId: string, body: { principal_kind: string; principal_id: string; role: string }) =>

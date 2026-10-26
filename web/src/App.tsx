@@ -163,9 +163,10 @@ function Shell() {
                   variant={view.name === "admin" ? "secondary" : "ghost"}
                   size="sm"
                   aria-label="Settings and admin"
+                  aria-current={view.name === "admin" || undefined}
                   onClick={() => setView({ name: "admin", tab: "vulns" })}
                 >
-                  ⚙ Settings
+                  <span aria-hidden>⚙</span> Settings
                 </Button>
               )}
 
@@ -276,53 +277,90 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const visible = (spaces ?? []).filter((s) => s.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const visible = (spaces ?? []).filter((sp) => sp.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const totals = (spaces ?? []).reduce(
+    (acc, sp) => ({
+      projects: acc.projects + sp.projects,
+      milestones: acc.milestones + sp.milestones,
+      issues: acc.issues + sp.open_findings,
+    }),
+    { projects: 0, milestones: 0, issues: 0 },
+  );
 
   return (
     <section aria-labelledby="spaces-title">
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-wrap items-end gap-4">
         <div>
-          <h2 id="spaces-title" className="font-serif text-3xl font-bold">Your spaces</h2>
+          <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Workspace</p>
+          <h2 id="spaces-title" className="mt-1 font-serif text-3xl font-bold">Spaces</h2>
           <p className="mt-1 max-w-xl text-sm text-text-muted">
-            A space holds projects. Each person — or whole group — gets one role per space: Owner, Coder, or Reader.
+            Every project lives in a space. Roles, health and activity at a glance.
           </p>
         </div>
-        <div className="ml-auto w-full sm:w-64">
-          <Input type="search" placeholder="Search spaces…" aria-label="Search spaces" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <div className="ml-auto flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <span className="hidden items-center gap-4 text-sm text-text-muted lg:flex" aria-label="Totals">
+            <span><strong className="font-serif text-base text-text">{totals.projects}</strong> projects</span>
+            <span><strong className="font-serif text-base text-text">{totals.milestones}</strong> milestones</span>
+            <span><strong className="font-serif text-base text-text">{totals.issues}</strong> open issues</span>
+          </span>
+          <span className="w-full sm:w-60">
+            <Input type="search" placeholder="Search spaces…" aria-label="Search spaces" value={query} onChange={(e) => setQuery(e.target.value)} />
+          </span>
         </div>
       </div>
 
       {error && <div className="mt-4"><Alert>{error}</Alert></div>}
 
       {spaces === null && !error && (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Loading spaces">
-          <Skeleton className="h-36" /><Skeleton className="h-36" /><Skeleton className="h-36" />
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading spaces">
+          <Skeleton className="h-52" /><Skeleton className="h-52" /><Skeleton className="h-52" />
         </div>
       )}
 
       {spaces !== null && visible.length > 0 && (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {visible.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => go({ name: "space", id: s.id, label: s.name })}
-              className="group rounded-lg border border-border bg-surface p-5 text-left shadow-surface transition duration-normal ease-standard hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.99]"
-            >
-              <span className="flex items-start gap-3">
-                <Avatar name={s.name} />
-                <span className="min-w-0">
-                  <span className="block truncate font-serif text-lg font-bold">{s.name}</span>
-                  <span className="text-xs text-text-muted">/{s.slug}</span>
-                </span>
-                <span className="ml-auto"><Badge tone={s.role === "owner" ? "primary" : "neutral"}>{s.role}</Badge></span>
-              </span>
-              <span className="mt-4 flex items-center gap-2 text-sm text-text-muted">
-                <span>{s.projects} {s.projects === 1 ? "project" : "projects"}</span>
-                <span aria-hidden className="ml-auto text-primary opacity-0 transition duration-fast group-hover:opacity-100">Open →</span>
-              </span>
-            </button>
-          ))}
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {visible.map((sp) => {
+            const healthy = sp.open_findings === 0;
+            return (
+              <article
+                key={sp.id}
+                className="group flex flex-col rounded-lg border border-border bg-surface shadow-surface transition duration-normal ease-standard hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-raised"
+              >
+                <button
+                  type="button"
+                  onClick={() => go({ name: "space", id: sp.id, label: sp.name })}
+                  className="flex flex-1 flex-col p-5 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.99]"
+                  aria-label={`Open space ${sp.name}`}
+                >
+                  <span className="flex items-start gap-3">
+                    <Avatar name={sp.name} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-serif text-lg font-bold leading-tight">{sp.name}</span>
+                      <span className="text-xs text-text-muted">/{sp.slug}</span>
+                    </span>
+                    <Badge tone={healthy ? "success" : "danger"}>{healthy ? "✓ Healthy" : `${sp.open_findings} to fix`}</Badge>
+                  </span>
+
+                  <span className="mt-3 flex flex-wrap gap-1.5">
+                    <Badge tone={sp.role === "owner" ? "primary" : "neutral"}>You: {sp.role}</Badge>
+                    {sp.vulnerabilities > 0 && <Badge tone="danger">{sp.vulnerabilities} vulnerabilities</Badge>}
+                  </span>
+
+                  <span className="mt-4 grid grid-cols-4 divide-x divide-border rounded-md border border-border bg-background py-2.5 text-center">
+                    <span><span className="block font-serif text-base font-bold leading-none">{sp.projects}</span><span className="mt-1 block text-[11px] text-text-muted">Projects</span></span>
+                    <span><span className="block font-serif text-base font-bold leading-none">{sp.milestones}</span><span className="mt-1 block text-[11px] text-text-muted">Milestones</span></span>
+                    <span><span className="block font-serif text-base font-bold leading-none">{sp.members}</span><span className="mt-1 block text-[11px] text-text-muted">Members</span></span>
+                    <span><span className="block font-serif text-base font-bold leading-none">{sp.open_findings}</span><span className="mt-1 block text-[11px] text-text-muted">Issues</span></span>
+                  </span>
+
+                  <span className="mt-4 flex items-center gap-2 border-t border-border pt-3 text-xs text-text-muted">
+                    <span>{sp.last_activity ? `Last activity ${new Date(sp.last_activity).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}` : "No activity yet"}</span>
+                    <span aria-hidden className="ml-auto text-sm font-medium text-primary opacity-0 transition duration-fast group-hover:opacity-100">Open space →</span>
+                  </span>
+                </button>
+              </article>
+            );
+          })}
         </div>
       )}
 
@@ -347,7 +385,7 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
             finally { setBusy(false); }
           }}>
             <Input placeholder="Space name, e.g. Client work" value={name} onChange={(e) => setName(e.target.value)} required aria-label="Space name" />
-            <Button type="submit" busy={busy}>Create</Button>
+            <Button type="submit" busy={busy}>Create space</Button>
           </form>
         </Card>
       )}
@@ -480,6 +518,7 @@ function SpaceDetail({ spaceId, label, go }: { spaceId: string; label: string; g
 function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; milestoneId?: string; go: (v: View, replace?: boolean) => void }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.project>> | null>(null);
   const [selected, setSelectedState] = useState<string | null>(milestoneId ?? null);
+  const [showPush, setShowPush] = useState(false);
   const [error, setError] = useState("");
 
   const setSelected = useCallback((mid: string) => {
@@ -559,28 +598,64 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
         </p>
       </Card>
 
-      <UploadBox projectId={projectId} onDone={load} />
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button aria-expanded={showPush} onClick={() => setShowPush((v) => !v)}>
+          {showPush ? "Close" : "＋ Push milestone"}
+        </Button>
+        <span className="text-sm text-text-muted">Saves a new scanned version — History below is never overwritten.</span>
+      </div>
+      {showPush && (
+        <UploadBox projectId={projectId} onDone={() => { setShowPush(false); void load(); }} onCancel={() => setShowPush(false)} />
+      )}
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[280px_1fr]">
         <div>
-          <h3 className="font-serif text-lg font-bold">History</h3>
+          <div className="flex items-baseline gap-2">
+            <h3 className="font-serif text-lg font-bold">History</h3>
+            <span className="text-xs text-text-muted">{data.milestones.length} milestone{data.milestones.length === 1 ? "" : "s"}</span>
+          </div>
           {data.milestones.length > 0 ? (
-            <ol className="mt-3 space-y-2">
-              {[...data.milestones].reverse().map((m) => {
+            <ol className="relative mt-4">
+              <span aria-hidden className="absolute bottom-3 left-[13px] top-3 w-px bg-border" />
+              {[...data.milestones].reverse().map((m, idx) => {
                 const active = selected === m.id;
+                const latest = idx === 0;
                 return (
-                  <li key={m.id}>
+                  <li key={m.id} className="relative pb-3 pl-9 last:pb-0">
+                    <span
+                      aria-hidden
+                      className={`absolute left-[7px] top-[18px] h-[13px] w-[13px] rounded-full border-[2.5px] transition duration-fast ${
+                        active ? "border-primary bg-primary" : m.findings > 0 ? "border-error/70 bg-surface" : "border-success/70 bg-surface"
+                      }`}
+                    />
                     <button
                       type="button"
                       aria-current={active || undefined}
                       onClick={() => setSelected(m.id)}
-                      className={`w-full rounded-lg border p-3 text-left shadow-surface transition duration-fast ease-standard focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.99] ${active ? "border-primary bg-primary/5" : "border-border bg-surface hover:border-primary/50"}`}
+                      className={`w-full rounded-lg border p-3.5 text-left transition duration-normal ease-standard focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.99] ${
+                        active
+                          ? "border-primary bg-primary/5 shadow-raised"
+                          : "border-border bg-surface shadow-surface hover:-translate-y-px hover:border-primary/50 hover:shadow-raised"
+                      }`}
                     >
-                      <span className="text-xs text-text-muted">#{m.seq_no} · {new Date(m.created_at).toLocaleDateString()}</span>
-                      <span className="block font-medium">{m.label}</span>
-                      <span className="mt-1 flex gap-1.5">
-                        {m.findings > 0 ? <Badge tone="danger">{m.findings} to fix</Badge> : <Badge tone="success">Clean</Badge>}
-                        <Badge>{m.scan_status}</Badge>
+                      <span className="flex items-center gap-2">
+                        <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-bold ${active ? "bg-primary text-primary-fg" : "bg-background text-text-muted"}`}>
+                          #{m.seq_no}
+                        </span>
+                        {latest && <Badge tone="primary">Latest</Badge>}
+                        <span className="ml-auto text-[11px] text-text-muted">
+                          {new Date(m.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                          {" · "}
+                          {new Date(m.created_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </span>
+                      <span className="mt-2 line-clamp-2 block text-sm font-medium leading-snug">{m.label}</span>
+                      <span className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                        {m.findings > 0 ? <Badge tone="danger">{m.findings} to fix</Badge> : <Badge tone="success">✓ Clean scan</Badge>}
+                        {m.languages?.length > 0 && <Badge>{m.languages.join(" · ")}</Badge>}
+                        <span aria-hidden className={`ml-auto text-xs font-medium text-primary transition duration-fast ${active ? "opacity-100" : "opacity-0"}`}>
+                          Viewing →
+                        </span>
                       </span>
                     </button>
                   </li>
@@ -588,7 +663,7 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
               })}
             </ol>
           ) : (
-            <div className="mt-3"><EmptyState title="No milestones yet" hint="Push one with the skill or the upload box above." /></div>
+            <div className="mt-3"><EmptyState title="No milestones yet" hint="Push one with the skill or the button above." /></div>
           )}
         </div>
         <div>
@@ -601,13 +676,13 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
   );
 }
 
-function UploadBox({ projectId, onDone }: { projectId: string; onDone: () => void }) {
+function UploadBox({ projectId, onDone, onCancel }: { projectId: string; onDone: () => void; onCancel: () => void }) {
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   return (
     <form
-      className="mt-5 rounded-lg border border-dashed border-border bg-surface p-5 shadow-surface"
+      className="vf-page mt-4 rounded-lg border border-dashed border-border bg-surface p-5 shadow-surface"
       onSubmit={async (e) => {
         e.preventDefault();
         const file = e.currentTarget.querySelector<HTMLInputElement>("input[type=file]")?.files?.[0];
@@ -630,6 +705,7 @@ function UploadBox({ projectId, onDone }: { projectId: string; onDone: () => voi
         <Input type="file" accept=".zip" aria-label="Project zip" className="w-auto" />
         <span className="min-w-48 flex-1"><Input placeholder="What changed? e.g. Login page works" value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Milestone label" /></span>
         <Button type="submit" busy={busy}>{busy ? "Scanning…" : "Save milestone"}</Button>
+        <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
       </div>
     </form>
   );
