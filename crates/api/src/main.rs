@@ -569,11 +569,11 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
         return (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({
             "milestone_id": milestone_id, "blocked": true,
             "message": "Saved, but your admin blocks milestones with critical secrets. Fix them and push again.",
-            "findings": findings.len(), "languages": languages
+            "findings": findings.len(), "sbom_packages": sbom_pkgs.len(), "languages": languages
         }))).into_response();
     }
     (StatusCode::CREATED, Json(serde_json::json!({
-        "milestone_id": milestone_id, "seq_no": seq, "findings": findings.len(), "languages": languages
+        "milestone_id": milestone_id, "seq_no": seq, "findings": findings.len(), "sbom_packages": sbom_pkgs.len(), "languages": languages
     }))).into_response()
 }
 
