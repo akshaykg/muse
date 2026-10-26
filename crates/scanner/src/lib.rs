@@ -802,3 +802,84 @@ pub fn cvss_base_score(vector: &str) -> Option<f64> {
 pub fn cvss_severity_word(score: f64) -> &'static str {
     if score >= 9.0 { "Critical" } else if score >= 7.0 { "High" } else if score >= 4.0 { "Medium" } else if score > 0.0 { "Low" } else { "None" }
 }
+
+// ------------------------------------------------------- SBOM conversions
+// The stored document stays syft-json; CycloneDX / SPDX are generated on
+// demand from the same package list so all three formats always agree.
+
+pub fn cyclonedx_document(packages: &[SbomPackage], project_slug: &str) -> serde_json::Value {
+    let components: Vec<serde_json::Value> = packages.iter().map(|p| serde_json::json!({
+        "type": "library",
+        "bom-ref": p.purl,
+        "name": p.name,
+        "version": p.version,
+        "purl": p.purl,
+        "properties": [{ "name": "vibeforge:ecosystem", "value": p.ecosystem }]
+    })).collect();
+    serde_json::json!({
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "metadata": {
+            "tools": ["vibeforge"],
+            "component": { "type": "application", "name": project_slug }
+        },
+        "components": components
+    })
+}
+
+pub fn spdx_document(packages: &[SbomPackage], project_slug: &str, document_id: &str) -> serde_json::Value {
+    let pkgs: Vec<serde_json::Value> = packages.iter().enumerate().map(|(i, p)| serde_json::json!({
+        "SPDXID": format!("SPDXRef-Package-{}", i + 1),
+        "name": p.name,
+        "versionInfo": p.version,
+        "downloadLocation": "NOASSERTION",
+        "filesAnalyzed": false,
+        "externalRefs": [{
+            "referenceCategory": "PACKAGE-MANAGER",
+            "referenceType": "purl",
+            "referenceLocator": p.purl
+        }]
+    })).collect();
+    serde_json::json!({
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": project_slug,
+        "documentNamespace": format!("https://vibeforge.local/sbom/{document_id}"),
+        "creationInfo": { "creators": ["Tool: vibeforge"], "created": "1970-01-01T00:00:00Z" },
+        "packages": pkgs,
+        "hasExtractedLicensingInfos": [],
+        "documentDescribes": pkgs.iter().map(|p| p["SPDXID"].clone()).collect::<Vec<_>>()
+    })
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    fn sample() -> Vec<SbomPackage> {
+        sbom_packages(&[
+            Dep { ecosystem: "npm".into(), name: "react".into(), version: "19.1.0".into() },
+            Dep { ecosystem: "crates.io".into(), name: "serde".into(), version: "1.0.0".into() },
+        ])
+    }
+
+    #[test]
+    fn cyclonedx_shape() {
+        let doc = cyclonedx_document(&sample(), "demo");
+        assert_eq!(doc["bomFormat"], "CycloneDX");
+        assert_eq!(doc["specVersion"], "1.5");
+        assert_eq!(doc["components"].as_array().unwrap().len(), 2);
+        assert_eq!(doc["components"][0]["purl"], "pkg:npm/react@19.1.0");
+    }
+
+    #[test]
+    fn spdx_shape() {
+        let doc = spdx_document(&sample(), "demo", "ms-123");
+        assert_eq!(doc["spdxVersion"], "SPDX-2.3");
+        assert_eq!(doc["packages"].as_array().unwrap().len(), 2);
+        assert_eq!(doc["packages"][1]["externalRefs"][0]["referenceLocator"], "pkg:cargo/serde@1.0.0");
+        assert!(doc["documentNamespace"].as_str().unwrap().contains("ms-123"));
+    }
+}

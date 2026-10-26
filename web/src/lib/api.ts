@@ -68,6 +68,15 @@ export const api = {
   settings: () => req<Record<string, unknown>>("/api/v1/admin/settings"),
   putSettings: (body: Record<string, unknown>) => req("/api/v1/admin/settings", { method: "PUT", body: JSON.stringify(body) }),
 
+  async faviconUrl(projectId: string): Promise<string | null> {
+    const token = getToken();
+    const res = await fetch(`/api/v1/projects/${projectId}/favicon`, {
+      headers: { Authorization: token ? `Bearer ${token}` : "" },
+    });
+    if (!res.ok) return null;
+    return URL.createObjectURL(await res.blob());
+  },
+
   async pushZip(projectId: string, file: File, label: string): Promise<unknown> {
     const token = getToken();
     const res = await fetch(`/api/v1/projects/${projectId}/milestones`, {
@@ -95,6 +104,21 @@ export const api = {
     const a = document.createElement("a");
     a.href = url;
     a.download = "SBOM.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  async downloadExport(milestoneId: string, format: "cyclonedx" | "spdx"): Promise<void> {
+    const token = getToken();
+    const res = await fetch(`/api/v1/milestones/${milestoneId}/export/${format}`, {
+      headers: { Authorization: token ? `Bearer ${token}` : "" },
+    });
+    if (!res.ok) throw new Error(`Could not export ${format}.`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = format === "cyclonedx" ? "SBOM.cyclonedx.json" : "SBOM.spdx.json";
     a.click();
     URL.revokeObjectURL(url);
   },

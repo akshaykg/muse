@@ -914,6 +914,91 @@ async fn download_sbom(State(state): State<Shared>, headers: HeaderMap, Path(id)
     }
 }
 
+/// Export the milestone SBOM as CycloneDX 1.5 or SPDX 2.3 JSON.
+/// Converted on demand from the stored syft-json so formats never drift.
+async fn export_sbom(State(state): State<Shared>, headers: HeaderMap, Path((id, format)): Path<(String, String)>) -> Response {
+    let a = auth!(&state, &headers);
+    if format != "cyclonedx" && format != "spdx" {
+        return err(StatusCode::BAD_REQUEST, "Format must be cyclonedx or spdx.");
+    }
+    let store = state.store.read().await;
+    let Some(m) = store.milestones.get(&id) else { return err(StatusCode::NOT_FOUND, "Milestone not found."); };
+    if can_read_project(&store, &a.0, &m.project_id).is_none() { return err(StatusCode::FORBIDDEN, "No access."); }
+    let slug = store.projects.get(&m.project_id).map(|p| p.slug.clone()).unwrap_or_else(|| "project".into());
+    let Some(f) = store.files.iter().find(|f| f.milestone_id == id && f.path == "SBOM.json") else {
+        return err(StatusCode::NOT_FOUND, "No SBOM for this milestone yet — push again to generate one.");
+    };
+    let key = f.blob_key.clone();
+    drop(store);
+    let Ok(bytes) = tokio::fs::read(state.data_dir.join(&key)).await else {
+        return err(StatusCode::NOT_FOUND, "SBOM data missing.");
+    };
+    let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "Stored SBOM is unreadable.");
+    };
+    let packages: Vec<scanner::SbomPackage> = doc["artifacts"].as_array().map(|arts| arts.iter().map(|a| {
+        let name = a["name"].as_str().unwrap_or("").to_string();
+        let version = a["version"].as_str().unwrap_or("").to_string();
+        let ecosystem = a["metadata"]["ecosystem"].as_str().unwrap_or("").to_string();
+        scanner::SbomPackage {
+            name, version, ecosystem,
+            purl: a["purl"].as_str().unwrap_or("").to_string(),
+            pkg_type: a["type"].as_str().unwrap_or("").to_string(),
+        }
+    }).collect()).unwrap_or_default();
+    let (out, filename) = if format == "cyclonedx" {
+        (scanner::cyclonedx_document(&packages, &slug), "SBOM.cyclonedx.json")
+    } else {
+        (scanner::spdx_document(&packages, &slug, &id), "SBOM.spdx.json")
+    };
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json"),
+         (axum::http::header::CONTENT_DISPOSITION, &*format!("attachment; filename={filename}"))],
+        serde_json::to_vec_pretty(&out).unwrap_or_default(),
+    ).into_response()
+}
+
+/// Latest favicon found in the project's newest milestone (for project cards).
+async fn project_favicon(State(state): State<Shared>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let a = auth!(&state, &headers);
+    let store = state.store.read().await;
+    let Some(p) = can_read_project(&store, &a.0, &id) else { return err(StatusCode::NOT_FOUND, "Project not found."); };
+    let _ = p;
+    let mut ms: Vec<&Milestone> = store.milestones.values().filter(|m| m.project_id == id).collect();
+    ms.sort_by_key(|m| m.seq_no);
+    // Newest milestone first; prefer exact favicon names over generic icons.
+    let mut found: Option<(String, String)> = None;
+    for m in ms.iter().rev() {
+        let mut best: Option<(u8, &StoredFile)> = None;
+        for f in store.files.iter().filter(|f| f.milestone_id == m.id) {
+            let lower = f.path.to_lowercase();
+            let score = if lower.ends_with("favicon.ico") { 0 }
+                else if lower.ends_with("favicon.png") { 1 }
+                else if lower.ends_with("favicon.svg") { 2 }
+                else if lower.contains("favicon") { 3 }
+                else if lower.ends_with("apple-touch-icon.png") { 4 }
+                else if lower.ends_with("/icon.png") || lower == "icon.png" { 5 }
+                else { continue };
+            if best.map(|(b, _)| score < b).unwrap_or(true) { best = Some((score, f)); }
+        }
+        if let Some((_, f)) = best {
+            let ctype = if f.path.ends_with(".ico") { "image/x-icon" }
+                else if f.path.ends_with(".svg") { "image/svg+xml" }
+                else if f.path.ends_with(".jpg") || f.path.ends_with(".jpeg") { "image/jpeg" }
+                else { "image/png" }.to_string();
+            found = Some((f.blob_key.clone(), ctype));
+            break;
+        }
+    }
+    let Some((key, ctype)) = found else { return err(StatusCode::NOT_FOUND, "No favicon in the latest milestone."); };
+    drop(store);
+    match tokio::fs::read(state.data_dir.join(&key)).await {
+        Ok(bytes) => (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ctype)], bytes).into_response(),
+        Err(_) => err(StatusCode::NOT_FOUND, "Favicon data missing."),
+    }
+}
+
 async fn serve_blob(State(state): State<Shared>, headers: HeaderMap, Path(key): Path<String>) -> Response {
     let _ = auth!(&state, &headers);
     // Keys are content-addressed; the milestone ACL was checked when the key was handed out.
@@ -980,11 +1065,13 @@ async fn main() {
         .route("/api/v1/spaces/{id}/members", get(list_members).post(add_member))
         .route("/api/v1/spaces/{id}/projects", get(list_projects).post(create_project))
         .route("/api/v1/projects/{id}", get(get_project))
+        .route("/api/v1/projects/{id}/favicon", get(project_favicon))
         .route("/api/v1/projects/{id}/milestones", get(list_milestones).post(push_milestone))
         .route("/api/v1/milestones/{id}", get(get_milestone))
         .route("/api/v1/milestones/{id}/files/content", get(file_content))
         .route("/api/v1/milestones/{id}/findings", get(milestone_findings))
         .route("/api/v1/milestones/{id}/sbom", get(download_sbom))
+        .route("/api/v1/milestones/{id}/export/{format}", get(export_sbom))
         .route("/api/v1/milestones/{id}/fork", post(fork_milestone))
         .route("/api/v1/milestones/{id}/screenshots", post(add_screenshot))
         .route("/api/v1/findings/{id}/ignore", post(ignore_finding))
