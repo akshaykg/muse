@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+/*
+ * VibeForge theme — one theme, token-only (design-tokens.md + theming.md).
+ * Raw hex lives ONLY here as --dx-* values. Components use semantic
+ * utilities (bg-surface, text-text-muted, border-border, bg-primary …).
+ */
+:root,
+[data-theme="light"] {
+  --dx-background: #f6f5f1;
+  --dx-surface: #ffffff;
+  --dx-surface-elevated: #ffffff;
+  --dx-primary: #0d6e63;
+  --dx-primary-hover: #0a5a51;
+  --dx-primary-fg: #ffffff;
+  --dx-text: #1a2320;
+  --dx-text-muted: #5c6a64;
+  --dx-border: #ddd9cf;
+  --dx-success: #16794c;
+  --dx-success-fg: #ffffff;
+  --dx-warning: #9a6700;
+  --dx-warning-fg: #1a2320;
+  --dx-error: #b3261e;
+  --dx-error-fg: #ffffff;
+  --dx-info: #175cd3;
+  --dx-info-fg: #ffffff;
+}
+
+[data-theme="dark"] {
+  --dx-background: #121816;
+  --dx-surface: #1a2320;
+  --dx-surface-elevated: #222d29;
+  --dx-primary: #2ea88f;
+  --dx-primary-hover: #3dbfa4;
+  --dx-primary-fg: #0c1210;
+  --dx-text: #e8edea;
+  --dx-text-muted: #9fb0a8;
+  --dx-border: #33413c;
+  --dx-success: #3cb179;
+  --dx-success-fg: #0c1210;
+  --dx-warning: #d9a521;
+  --dx-warning-fg: #1a2320;
+  --dx-error: #e0655f;
+  --dx-error-fg: #ffffff;
+  --dx-info: #6aa5ff;
+  --dx-info-fg: #0c1210;
+}
+
+@theme inline {
+  --color-background: var(--dx-background);
+  --color-surface: var(--dx-surface);
+  --color-surface-elevated: var(--dx-surface-elevated);
+  --color-primary: var(--dx-primary);
+  --color-primary-hover: var(--dx-primary-hover);
+  --color-primary-fg: var(--dx-primary-fg);
+  --color-text: var(--dx-text);
+  --color-text-muted: var(--dx-text-muted);
+  --color-border: var(--dx-border);
+  --color-success: var(--dx-success);
+  --color-success-fg: var(--dx-success-fg);
+  --color-warning: var(--dx-warning);
+  --color-warning-fg: var(--dx-warning-fg);
+  --color-error: var(--dx-error);
+  --color-error-fg: var(--dx-error-fg);
+  --color-info: var(--dx-info);
+  --color-info-fg: var(--dx-info-fg);
+
+  --font-sans: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-surface: 0 1px 2px rgb(26 35 32 / 0.06);
+  --shadow-raised: 0 4px 16px rgb(26 35 32 / 0.1);
+  --shadow-overlay: 0 12px 32px rgb(26 35 32 / 0.18);
+
+  --z-base: 0;
+  --z-raised: 10;
+  --z-sticky: 20;
+  --z-dropdown: 40;
+  --z-overlay: 50;
+  --z-toast: 60;
+}
+
+@utility duration-fast {
+  transition-duration: 120ms;
+}
+@utility duration-normal {
+  transition-duration: 200ms;
+}
+@utility ease-standard {
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+@keyframes vf-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes vf-pop {
+  from { opacity: 0; transform: scale(0.97) translateY(-2px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes vf-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.vf-page { animation: vf-rise 200ms cubic-bezier(0.2, 0, 0, 1); }
+.vf-pop { animation: vf-pop 120ms cubic-bezier(0.2, 0, 0, 1); transform-origin: top right; }
+.vf-toast { animation: vf-toast-in 200ms cubic-bezier(0.2, 0, 0, 1); }
+
+/* No motion at all for people who ask for it (toasts.md, taste). */
+@media (prefers-reduced-motion: reduce) {
+  .vf-page, .vf-pop, .vf-toast { animation: none; }
+  *, *::before, *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}

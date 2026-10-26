@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vibeforge
+      POSTGRES_PASSWORD: vibeforge
+      POSTGRES_DB: vibeforge
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+  # Optional: the Rust server currently uses data/db.json + blobs so it runs
+  # standalone (`cargo run -p api`). Point DATABASE_URL at this Postgres when
+  # you swap the Store seam to SQL.
+volumes:
+  pgdata:
