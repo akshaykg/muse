@@ -605,29 +605,6 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
         </div>
       )}
 
-      {canCreate && showCreate && (
-        <Card className="vf-page mt-6 p-5">
-          <div className="flex items-start gap-3">
-            <div>
-              <h3 className="font-medium">Create a space</h3>
-              <p className="mt-0.5 text-sm text-text-muted">You become its Owner. Add people and groups from inside the space.</p>
-            </div>
-            <span className="ml-auto">
-              <Button variant="ghost" size="sm" onClick={() => setShowCreate(false)}>Cancel</Button>
-            </span>
-          </div>
-          <form className="mt-3 flex max-w-md gap-2" onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            try { await api.createSpace(name); setName(""); setShowCreate(false); await load(); toast.success("Space created."); }
-            catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the space."); }
-            finally { setBusy(false); }
-          }}>
-            <Input autoFocus placeholder="Space name, e.g. Client work" value={name} onChange={(e) => setName(e.target.value)} required aria-label="Space name" />
-            <Button type="submit" busy={busy}>Create space</Button>
-          </form>
-        </Card>
-      )}
     </section>
   );
 }
