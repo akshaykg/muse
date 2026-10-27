@@ -173,12 +173,12 @@ function Shell() {
 
   return (
     <PermissionsProvider value={perms}>
-      <div className="flex min-h-screen bg-background text-text">
+      <div className="flex h-screen overflow-hidden bg-background text-text">
         {/* Left navigation — collapsible + drag-resizable (persisted) */}
         <aside
           aria-label="Left navigation"
           style={collapsed ? undefined : { width: sideW }}
-          className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-border bg-surface lg:relative lg:flex ${collapsed ? "w-16" : ""}`}
+          className={`hidden h-full shrink-0 flex-col overflow-hidden border-r border-border bg-surface lg:relative lg:flex ${collapsed ? "w-16" : ""}`}
         >
           <button
             type="button"
@@ -194,7 +194,7 @@ function Shell() {
             )}
           </button>
 
-          <nav aria-label="Spaces and settings" className="flex-1 overflow-y-auto p-2">
+          <nav aria-label="Spaces and settings" className="flex-1 overflow-hidden p-2">
             <SideItem collapsed={collapsed} active={view.name !== "admin" && view.name !== "profile"} label="All spaces" icon="▦" onClick={() => setView({ name: "spaces" })} />
             {!collapsed && <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>}
             <div className="space-y-0.5">
@@ -251,9 +251,9 @@ function Shell() {
           )}
         </aside>
 
-        <div className="min-w-0 flex-1">
-          {/* Top nav: search + profile only */}
-          <header className="sticky top-0 z-sticky border-b border-border bg-surface/95 shadow-surface backdrop-blur">
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Top nav: search + profile only (fixed, never scrolls) */}
+          <header className="z-sticky shrink-0 border-b border-border bg-surface/95 shadow-surface backdrop-blur">
             <div className="flex items-center gap-3 px-4 py-2.5">
               <button
                 type="button"
@@ -288,7 +288,7 @@ function Shell() {
             </div>
           </header>
 
-          <main className="mx-auto w-full max-w-6xl px-4 py-6">
+          <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-4 py-6">
             <div key={view.name + ("id" in view ? view.id : "")} className="vf-page">
               {view.name === "spaces" && <Spaces me={me} go={setView} />}
               {view.name === "space" && <SpaceDetail spaceId={view.id} label={view.label} go={setView} />}
@@ -1540,26 +1540,38 @@ function Marketplace({ go }: { go: (v: View) => void }) {
 function Admin({ initialTab }: { initialTab: string }) {
   const [tab, setTab] = useState(initialTab || "vulns");
   const [users, setUsers] = useState<Awaited<ReturnType<typeof api.adminUsers>>>([]);
+  const [groups, setGroups] = useState<Awaited<ReturnType<typeof api.adminGroups>>>([]);
   const [vulns, setVulns] = useState<Awaited<ReturnType<typeof api.adminVulns>> | null>(null);
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
   const [form, setForm] = useState({ email: "", display_name: "", password: "", is_platform_admin: false });
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
 
   const load = useCallback(async () => {
     try {
-      const [u, v, s] = await Promise.all([api.adminUsers(), api.adminVulns(), api.settings()]);
-      setUsers(u); setVulns(v); setSettings(s);
+      const [u, g, v, st] = await Promise.all([api.adminUsers(), api.adminGroups(), api.adminVulns(), api.settings()]);
+      setUsers(u); setGroups(g); setVulns(v); setSettings(st);
     } catch { setError("Admin access required."); }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
+  useEffect(() => { if (initialTab) setTab(initialTab === "people" ? "people" : initialTab); }, [initialTab]);
+
+  const SETTING_SECTIONS: { title: string; hint: string; fields: string[] }[] = [
+    { title: "Upload & scanning", hint: "Zip-bomb limits, antivirus and CVE lookups for every push.", fields: ["max_compressed_mb", "max_uncompressed_mb", "max_entries", "max_file_mb", "max_ratio", "block_push_on_critical", "scan_timeout_s", "clamd_host", "osv_timeout_s", "osv_cache_hours", "unused_dep_check"] },
+    { title: "Access & tokens", hint: "Sessions, API tokens and self-registration.", fields: ["session_hours", "token_default_ttl_days", "max_active_tokens_per_user", "allow_registration"] },
+    { title: "Policy & quotas", hint: "What gets blocked, license rules and per-space limits (0 = unlimited).", fields: ["block_severity", "block_push_on_critical_note", "license_blocklist", "fix_sla_days", "space_quota_mb", "space_member_quota"] },
+    { title: "Notifications", hint: "Webhook for high/critical pushes and outgoing email.", fields: ["webhook_url", "smtp_host", "smtp_port", "smtp_from", "smtp_user", "smtp_password"] },
+    { title: "SSO & provisioning", hint: "OIDC sign-in and SCIM user provisioning. Secrets are encrypted at rest.", fields: ["oidc_issuer", "oidc_client_id", "oidc_client_secret", "scim_token", "public_base_url"] },
+  ];
+  const sectionedFields = new Set(SETTING_SECTIONS.flatMap((sec) => sec.fields));
 
   return (
     <section aria-labelledby="admin-title">
       <h2 id="admin-title" className="font-serif text-3xl font-bold">Settings &amp; admin</h2>
-      <p className="mt-1 text-sm text-text-muted">One place for people, safety, and app settings — reached from the single Settings button.</p>
+      <p className="mt-1 text-sm text-text-muted">One place for people, groups, safety, and app settings — reached from the single Settings button.</p>
       {error && <div className="mt-4"><Alert>{error}</Alert></div>}
 
       <div className="mt-5">
@@ -1569,7 +1581,8 @@ function Admin({ initialTab }: { initialTab: string }) {
           onChange={setTab}
           items={[
             { key: "vulns", label: `Vulnerabilities${vulns ? ` (${vulns.total_open})` : ""}` },
-            { key: "people", label: "People & groups" },
+            { key: "people", label: "People" },
+            { key: "groups", label: "Groups" },
             { key: "settings", label: "App settings" },
           ]}
         />
@@ -1605,100 +1618,158 @@ function Admin({ initialTab }: { initialTab: string }) {
         )}
 
         {tab === "people" && (
-          <div className="space-y-6">
-            <div>
-              {users.length > 0 ? (
-                <ul className="divide-y divide-border rounded-lg border border-border bg-surface shadow-surface">
-                  {users.map((u) => (
-                    <li key={u.id} className="flex min-h-11 flex-wrap items-center gap-2 px-4 py-2.5 text-sm">
-                      <Avatar name={u.display_name} size="sm" />
-                      <span className="font-medium">{u.display_name}</span>
-                      <span className="text-text-muted">{u.email}</span>
-                      {u.is_platform_admin && <Badge tone="primary">Admin</Badge>}
-                      {u.is_blocked && <Badge tone="danger">Blocked</Badge>}
-                      <span className="ml-auto flex gap-1">
-                        {u.is_blocked
-                          ? <Button variant="ghost" size="sm" onClick={async () => { await api.adminUnblock(u.id); await load(); toast.success("Member unblocked."); }}>Unblock</Button>
-                          : <Button variant="ghost" size="sm" onClick={async () => { await api.adminBlock(u.id, "Blocked by admin"); await load(); toast.info("Member blocked."); }}>Block</Button>}
-                        <Button variant="ghost" size="sm" onClick={async () => { await api.adminNudge(u.id, "Hello from your admin — please check your project findings."); toast.success("Message left on their latest milestone."); }}>Contact</Button>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : <EmptyState title="No people yet" hint="Create the first user below." />}
-              <Card className="mt-4 p-4">
-                <p className="font-medium">Create a user</p>
-                <form className="mt-3 grid max-w-lg gap-3" onSubmit={async (e) => {
-                  e.preventDefault();
-                  setBusy(true);
-                  try {
-                    await api.adminCreateUser(form);
-                    setForm({ email: "", display_name: "", password: "", is_platform_admin: false });
-                    await load();
-                    toast.success("User created. Share the password once — they create their own token under Profile.");
-                  } catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the user."); }
-                  finally { setBusy(false); }
-                }}>
-                  <Input type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required aria-label="Email" />
-                  <Input placeholder="Display name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} required aria-label="Display name" />
-                  <Input type="password" placeholder="Temporary password (8+ characters)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required aria-label="Temporary password" />
-                  <label className="flex min-h-11 items-center gap-2 text-sm">
-                    <input type="checkbox" className="h-4 w-4 accent-primary" checked={form.is_platform_admin} onChange={(e) => setForm({ ...form, is_platform_admin: e.target.checked })} />
-                    Platform admin
-                  </label>
-                  <Button type="submit" busy={busy}>Create user</Button>
-                </form>
-              </Card>
-              <CreateGroup users={users} onDone={load} />
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-text-muted">{users.length} people. Block stops all sign-ins and pushes instantly.</p>
+              <span className="ml-auto"><Button onClick={() => setShowCreateUser(true)}>+ Create user</Button></span>
             </div>
+            {users.length > 0 ? (
+              <ul className="mt-3 divide-y divide-border rounded-lg border border-border bg-surface shadow-surface">
+                {users.map((u) => (
+                  <li key={u.id} className="flex min-h-11 flex-wrap items-center gap-2 px-4 py-2.5 text-sm">
+                    <Avatar name={u.display_name} size="sm" />
+                    <span className="font-medium">{u.display_name}</span>
+                    <span className="text-text-muted">{u.email}</span>
+                    {u.is_platform_admin && <Badge tone="primary">Admin</Badge>}
+                    {u.is_blocked && <Badge tone="danger">Blocked</Badge>}
+                    <span className="ml-auto flex gap-1">
+                      {u.is_blocked
+                        ? <Button variant="ghost" size="sm" onClick={async () => { await api.adminUnblock(u.id); await load(); toast.success("Member unblocked."); }}>Unblock</Button>
+                        : <Button variant="ghost" size="sm" onClick={async () => { await api.adminBlock(u.id, "Blocked by admin"); await load(); toast.info("Member blocked."); }}>Block</Button>}
+                      <Button variant="ghost" size="sm" onClick={async () => { await api.adminNudge(u.id, "Hello from your admin — please check your project findings."); toast.success("Message left on their latest milestone."); }}>Contact</Button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : <div className="mt-3"><EmptyState title="No people yet" hint="Create the first user with the button above." /></div>}
+
+            <Modal open={showCreateUser} onClose={() => setShowCreateUser(false)} title="Create a user" hint="Share the temporary password once — they sign in and create their own API token under Profile.">
+              <form className="grid gap-3" onSubmit={async (e) => {
+                e.preventDefault();
+                setBusy(true);
+                try {
+                  await api.adminCreateUser(form);
+                  setForm({ email: "", display_name: "", password: "", is_platform_admin: false });
+                  setShowCreateUser(false);
+                  await load();
+                  toast.success("User created.");
+                } catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the user."); }
+                finally { setBusy(false); }
+              }}>
+                <Input type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required aria-label="Email" />
+                <Input placeholder="Display name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} required aria-label="Display name" />
+                <Input type="password" placeholder="Temporary password (8+ characters)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required aria-label="Temporary password" />
+                <label className="flex min-h-11 items-center gap-2 text-sm">
+                  <input type="checkbox" className="h-4 w-4 accent-primary" checked={form.is_platform_admin} onChange={(e) => setForm({ ...form, is_platform_admin: e.target.checked })} />
+                  Platform admin
+                </label>
+                <div className="flex gap-2">
+                  <Button type="submit" busy={busy}>Create user</Button>
+                  <Button type="button" variant="ghost" onClick={() => setShowCreateUser(false)}>Cancel</Button>
+                </div>
+              </form>
+            </Modal>
+          </div>
+        )}
+
+        {tab === "groups" && (
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-text-muted">{groups.length} groups. Give a group a role in a space and every member inherits it.</p>
+              <span className="ml-auto"><Button onClick={() => setShowCreateGroup(true)}>+ Create group</Button></span>
+            </div>
+            {groups.length > 0 ? (
+              <ul className="mt-3 divide-y divide-border rounded-lg border border-border bg-surface shadow-surface">
+                {groups.map((g) => (
+                  <li key={g.id} className="flex min-h-11 flex-wrap items-center gap-2 px-4 py-2.5 text-sm">
+                    <Avatar name={g.name} size="sm" />
+                    <span className="font-medium">{g.name}</span>
+                    {g.description && <span className="text-text-muted">{g.description}</span>}
+                    <span className="ml-auto"><Badge>{g.member_ids.length} members</Badge></span>
+                  </li>
+                ))}
+              </ul>
+            ) : <div className="mt-3"><EmptyState title="No groups yet" hint="Create the first group with the button above." /></div>}
+            <CreateGroup users={users} open={showCreateGroup} onClose={() => setShowCreateGroup(false)} onDone={load} />
           </div>
         )}
 
         {tab === "settings" && (
-          <div>
-            <p className="max-w-2xl text-sm text-text-muted">Upload limits stop zip bombs. Token and session values control sign-in. Changes save to the database and take effect on the next request — no restart.</p>
-            {settings ? (
-              <form className="mt-4 grid max-w-xl gap-2" onSubmit={async (e) => {
-                e.preventDefault();
-                await api.putSettings(settings);
-                toast.success("Settings saved.");
-              }}>
-                {Object.entries(settings).map(([k, v]) => (
-                  <label key={k} className="flex min-h-11 items-center gap-3 rounded-md border border-border bg-surface px-3 py-1.5 text-sm">
-                    <span className="w-52 shrink-0 font-medium">{k}</span>
-                    {typeof v === "boolean"
-                      ? <input type="checkbox" className="h-4 w-4 accent-primary" checked={v} onChange={(e) => setSettings({ ...settings, [k]: e.target.checked })} />
-                      : <Input value={String(v)} aria-label={k} onChange={(e) => setSettings({ ...settings, [k]: typeof v === "number" ? Number(e.target.value) : e.target.value })} />}
-                  </label>
-                ))}
-                <div className="mt-2"><Button type="submit">Save settings</Button></div>
-              </form>
-            ) : <div className="mt-4 space-y-2"><Skeleton className="h-11" /><Skeleton className="h-11" /><Skeleton className="h-11" /></div>}
-          </div>
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            if (!settings) return;
+            await api.putSettings(settings);
+            toast.success("Settings saved.");
+          }}>
+            <div className="space-y-4">
+              {SETTING_SECTIONS.map((sec) => {
+                const fields = sec.fields.filter((f) => settings && f in settings);
+                if (!settings || fields.length === 0) return null;
+                return (
+                  <Card key={sec.title} className="p-5">
+                    <h3 className="font-serif text-lg font-bold">{sec.title}</h3>
+                    <p className="mt-0.5 text-sm text-text-muted">{sec.hint}</p>
+                    <div className="mt-4 grid gap-2">
+                      {fields.map((k) => {
+                        const v = settings[k];
+                        return (
+                          <label key={k} className="flex min-h-11 items-center gap-3 rounded-md border border-border bg-background px-3 py-1.5 text-sm">
+                            <span className="w-52 shrink-0 font-medium">{k}</span>
+                            {typeof v === "boolean"
+                              ? <input type="checkbox" className="h-4 w-4 accent-primary" checked={v} onChange={(e) => setSettings({ ...settings, [k]: e.target.checked })} />
+                              : <Input type={k.includes("password") || k.includes("secret") || k.includes("token") ? "password" : "text"} value={String(v)} aria-label={k} onChange={(e) => setSettings({ ...settings, [k]: typeof v === "number" ? Number(e.target.value) : e.target.value })} />}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                );
+              })}
+              {settings && Object.keys(settings).filter((k) => !sectionedFields.has(k)).length > 0 && (
+                <Card className="p-5">
+                  <h3 className="font-serif text-lg font-bold">Other</h3>
+                  <div className="mt-4 grid gap-2">
+                    {Object.entries(settings).filter(([k]) => !sectionedFields.has(k)).map(([k, v]) => (
+                      <label key={k} className="flex min-h-11 items-center gap-3 rounded-md border border-border bg-background px-3 py-1.5 text-sm">
+                        <span className="w-52 shrink-0 font-medium">{k}</span>
+                        {typeof v === "boolean"
+                          ? <input type="checkbox" className="h-4 w-4 accent-primary" checked={v} onChange={(e) => setSettings({ ...settings, [k]: e.target.checked })} />
+                          : <Input value={String(v)} aria-label={k} onChange={(e) => setSettings({ ...settings, [k]: typeof v === "number" ? Number(e.target.value) : e.target.value })} />}
+                      </label>
+                    ))}
+                  </div>
+                </Card>
+              )}
+              {!settings && <div className="space-y-2"><Skeleton className="h-11" /><Skeleton className="h-11" /><Skeleton className="h-11" /></div>}
+            </div>
+            <div className="sticky bottom-4 mt-4 flex justify-end">
+              <Button type="submit" className="shadow-raised">Save all settings</Button>
+            </div>
+            <p className="mt-2 text-right text-xs text-text-muted">Saves to the database and takes effect on the next request — no restart.</p>
+          </form>
         )}
       </div>
     </section>
   );
 }
 
-function CreateGroup({ users, onDone }: { users: { id: string; display_name: string }[]; onDone: () => void }) {
+function CreateGroup({ users, open, onClose, onDone }: { users: { id: string; display_name: string }[]; open: boolean; onClose: () => void; onDone: () => void }) {
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   return (
-    <Card className="mt-4 max-w-lg p-4">
-      <p className="font-medium">Create a group</p>
-      <p className="mt-0.5 text-sm text-text-muted">Give the group a role in a space and everyone in it inherits that role.</p>
+    <Modal open={open} onClose={onClose} title="Create a group" hint="Give the group a role in a space and everyone in it inherits that role.">
       <form onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
-        try { await api.adminCreateGroup({ name, description: "", member_ids: picked }); setName(""); setPicked([]); onDone(); toast.success("Group created."); }
+        try { await api.adminCreateGroup({ name, description: "", member_ids: picked }); setName(""); setPicked([]); onClose(); onDone(); toast.success("Group created."); }
         catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the group."); }
         finally { setBusy(false); }
       }}>
-        <div className="mt-3"><Input placeholder="Group name" value={name} onChange={(e) => setName(e.target.value)} required aria-label="Group name" /></div>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <Input autoFocus placeholder="Group name" value={name} onChange={(e) => setName(e.target.value)} required aria-label="Group name" />
+        <p className="mt-3 text-sm font-medium">Members</p>
+        <div className="mt-2 flex flex-wrap gap-2">
           {users.map((u) => {
             const on = picked.includes(u.id);
             return (
@@ -1713,9 +1784,13 @@ function CreateGroup({ users, onDone }: { users: { id: string; display_name: str
               </button>
             );
           })}
+          {users.length === 0 && <span className="text-sm text-text-muted">Create people first — they will appear here.</span>}
         </div>
-        <div className="mt-3"><Button type="submit" busy={busy}>Create group</Button></div>
+        <div className="mt-4 flex gap-2">
+          <Button type="submit" busy={busy}>Create group</Button>
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+        </div>
       </form>
-    </Card>
+    </Modal>
   );
 }
