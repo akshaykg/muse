@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, getToken, setToken } from "./lib/api";
 import {
   Alert,
@@ -22,6 +22,21 @@ import {
   useToast,
   type SpaceRoleName,
 } from "./components/ui";
+import {
+  VibeForgeLogo,
+  DefaultProjectIcon,
+  IconSpaces,
+  IconPlus,
+  IconMarketplace,
+  IconShieldAlert,
+  IconPeople,
+  IconSettings,
+  IconChevronLeft,
+  IconChevronRight,
+  IconSearch,
+  IconMenu,
+  IconClose,
+} from "./components/icons";
 
 type Me = Awaited<ReturnType<typeof api.me>>;
 type View =
@@ -94,6 +109,11 @@ function Shell() {
     const v = Number(localStorage.getItem("vf_side_w"));
     return v >= 200 && v <= 420 ? v : 264;
   });
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [view]);
 
   const setView = useCallback((v: View, replace = false) => {
     const path = toPath(v);
@@ -171,10 +191,12 @@ function Shell() {
     window.addEventListener("mouseup", onUp);
   };
 
+
+
   return (
     <PermissionsProvider value={perms}>
       <div className="flex h-screen overflow-hidden bg-background text-text">
-        {/* Left navigation — collapsible + drag-resizable (persisted) */}
+        {/* Left navigation — desktop: collapsible + drag-resizable (persisted) */}
         <aside
           aria-label="Left navigation"
           style={collapsed ? undefined : { width: sideW }}
@@ -183,9 +205,9 @@ function Shell() {
           <button
             type="button"
             onClick={() => setView({ name: "spaces" })}
-            className="flex items-center gap-2.5 border-b border-border px-4 py-3.5 text-left transition duration-fast hover:bg-background focus-visible:outline-2 focus-visible:outline-primary"
+            className="flex items-center gap-2.5 border-b border-border px-3.5 py-3 text-left transition-all duration-fast hover:bg-background active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer select-none"
           >
-            <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary font-serif text-lg font-bold text-primary-fg">V</span>
+            <VibeForgeLogo size={32} />
             {!collapsed && (
               <span className="min-w-0">
                 <span className="block truncate font-serif text-lg font-bold leading-tight">VibeForge</span>
@@ -194,17 +216,17 @@ function Shell() {
             )}
           </button>
 
-          <nav aria-label="Spaces and settings" className="flex-1 overflow-hidden p-2">
-            <SideItem collapsed={collapsed} active={view.name !== "admin" && view.name !== "profile"} label="All spaces" icon="▦" onClick={() => setView({ name: "spaces" })} />
+          <nav aria-label="Spaces and settings" className="flex-1 overflow-y-auto p-2">
+            <SideItem collapsed={collapsed} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => setView({ name: "spaces" })} />
             {!collapsed && <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>}
             <div className="space-y-0.5">
               {me.spaces.map((sp) => (
                 <SideItem
                   key={sp.id}
                   collapsed={collapsed}
-                  active={(view.name === "space" && view.id === sp.id) || (view.name === "project" && false)}
+                  active={view.name === "space" && view.id === sp.id}
                   label={sp.name}
-                  icon={sp.name.slice(0, 1).toUpperCase()}
+                  icon={<span className="text-xs font-bold">{sp.name.slice(0, 1).toUpperCase()}</span>}
                   hint={collapsed ? sp.name : `${sp.role}`}
                   onClick={() => setView({ name: "space", id: sp.id, label: sp.name })}
                 />
@@ -215,7 +237,7 @@ function Shell() {
                 collapsed={collapsed}
                 active={false}
                 label="New space"
-                icon="+"
+                icon={<IconPlus />}
                 onClick={() => {
                   setView({ name: "spaces" });
                   window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
@@ -224,20 +246,20 @@ function Shell() {
             )}
 
             <div className="my-2 border-t border-border" />
-            <SideItem collapsed={collapsed} active={view.name === "marketplace"} label="Marketplace" icon="◇" onClick={() => setView({ name: "marketplace" })} />
+            <SideItem collapsed={collapsed} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => setView({ name: "marketplace" })} />
             {perms.isAdmin && (
               <>
                 {!collapsed && <p className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Settings</p>}
                 {collapsed && <div className="my-3 border-t border-border" />}
-                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "vulns"} label="Vulnerabilities" icon="!" onClick={() => setView({ name: "admin", tab: "vulns" })} />
-                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "people"} label="People & groups" icon="◉" onClick={() => setView({ name: "admin", tab: "people" })} />
-                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "settings"} label="App settings" icon="⚙" onClick={() => setView({ name: "admin", tab: "settings" })} />
+                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "vulns"} label="Vulnerabilities" icon={<IconShieldAlert />} onClick={() => setView({ name: "admin", tab: "vulns" })} />
+                <SideItem collapsed={collapsed} active={view.name === "admin" && (view.tab === "people" || view.tab === "groups")} label="People & groups" icon={<IconPeople />} onClick={() => setView({ name: "admin", tab: "people" })} />
+                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "settings"} label="App settings" icon={<IconSettings />} onClick={() => setView({ name: "admin", tab: "settings" })} />
               </>
             )}
           </nav>
 
           <div className="border-t border-border p-2">
-            <SideItem collapsed={collapsed} active={false} label={collapsed ? "Expand sidebar" : "Collapse sidebar"} icon={collapsed ? "»" : "«"} onClick={toggleCollapsed} />
+            <SideItem collapsed={collapsed} active={false} label={collapsed ? "Expand sidebar" : "Collapse sidebar"} icon={collapsed ? <IconChevronRight /> : <IconChevronLeft />} onClick={toggleCollapsed} />
           </div>
 
           {!collapsed && (
@@ -251,21 +273,107 @@ function Shell() {
           )}
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile Navigation Drawer Overlay */}
+        {mobileNavOpen && (
+          <div className="fixed inset-0 z-overlay lg:hidden" role="dialog" aria-modal="true" aria-label="Mobile Navigation">
+            <div
+              className="absolute inset-0 bg-text/40 backdrop-blur-xs transition-opacity duration-fast"
+              onClick={() => setMobileNavOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="relative flex h-full w-[min(300px,85vw)] flex-col border-r border-border bg-surface p-3 shadow-overlay">
+              <div className="flex items-center justify-between border-b border-border pb-3 px-1">
+                <button
+                  type="button"
+                  onClick={() => { setView({ name: "spaces" }); setMobileNavOpen(false); }}
+                  className="flex items-center gap-2.5 text-left active:scale-[0.98] cursor-pointer"
+                >
+                  <VibeForgeLogo size={30} />
+                  <div>
+                    <span className="block font-serif text-base font-bold leading-tight">VibeForge</span>
+                    <span className="block text-[11px] text-text-muted">Milestones, not git</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileNavOpen(false)}
+                  aria-label="Close navigation"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-background hover:text-text active:scale-90 cursor-pointer"
+                >
+                  <IconClose />
+                </button>
+              </div>
+
+              <nav aria-label="Mobile spaces and settings" className="flex-1 overflow-y-auto py-3 space-y-1">
+                <SideItem collapsed={false} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => { setView({ name: "spaces" }); setMobileNavOpen(false); }} />
+                <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>
+                <div className="space-y-0.5">
+                  {me.spaces.map((sp) => (
+                    <SideItem
+                      key={sp.id}
+                      collapsed={false}
+                      active={view.name === "space" && view.id === sp.id}
+                      label={sp.name}
+                      icon={<span className="text-xs font-bold">{sp.name.slice(0, 1).toUpperCase()}</span>}
+                      hint={sp.role}
+                      onClick={() => { setView({ name: "space", id: sp.id, label: sp.name }); setMobileNavOpen(false); }}
+                    />
+                  ))}
+                </div>
+                {perms.isAdmin && (
+                  <SideItem
+                    collapsed={false}
+                    active={false}
+                    label="New space"
+                    icon={<IconPlus />}
+                    onClick={() => {
+                      setView({ name: "spaces" });
+                      setMobileNavOpen(false);
+                      window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
+                    }}
+                  />
+                )}
+                <div className="my-2 border-t border-border" />
+                <SideItem collapsed={false} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => { setView({ name: "marketplace" }); setMobileNavOpen(false); }} />
+                {perms.isAdmin && (
+                  <>
+                    <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Settings</p>
+                    <SideItem collapsed={false} active={view.name === "admin" && view.tab === "vulns"} label="Vulnerabilities" icon={<IconShieldAlert />} onClick={() => { setView({ name: "admin", tab: "vulns" }); setMobileNavOpen(false); }} />
+                    <SideItem collapsed={false} active={view.name === "admin" && (view.tab === "people" || view.tab === "groups")} label="People & groups" icon={<IconPeople />} onClick={() => { setView({ name: "admin", tab: "people" }); setMobileNavOpen(false); }} />
+                    <SideItem collapsed={false} active={view.name === "admin" && view.tab === "settings"} label="App settings" icon={<IconSettings />} onClick={() => { setView({ name: "admin", tab: "settings" }); setMobileNavOpen(false); }} />
+                  </>
+                )}
+              </nav>
+            </div>
+          </div>
+        )}
+
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {/* Top nav: search + profile only (fixed, never scrolls) */}
           <header className="z-sticky shrink-0 border-b border-border bg-surface/95 shadow-surface backdrop-blur">
-            <div className="flex items-center gap-3 px-4 py-2.5">
-              <button
-                type="button"
-                onClick={() => setView({ name: "spaces" })}
-                aria-label="VibeForge home"
-                className="flex h-9 w-9 items-center justify-center rounded-md bg-primary font-serif text-lg font-bold text-primary-fg transition duration-fast hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-primary lg:hidden"
-              >
-                V
-              </button>
+            <div className="flex items-center gap-2.5 px-3 py-2.5 sm:px-4">
+              <div className="flex items-center gap-2 lg:hidden">
+                <button
+                  type="button"
+                  onClick={() => setMobileNavOpen((v) => !v)}
+                  aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
+                  className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text shadow-surface transition-all duration-fast hover:bg-background active:scale-[0.92] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                >
+                  {mobileNavOpen ? <IconClose /> : <IconMenu />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView({ name: "spaces" })}
+                  aria-label="VibeForge home"
+                  className="flex items-center gap-2 active:scale-[0.96] cursor-pointer"
+                >
+                  <VibeForgeLogo size={28} />
+                  <span className="hidden font-serif text-base font-bold sm:inline">VibeForge</span>
+                </button>
+              </div>
               <GlobalSearch go={setView} spaces={me.spaces} />
               <div className="ml-auto">
-                <Menu label="Profile menu" button={<span className="flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-3 shadow-surface transition duration-fast hover:bg-background"><Avatar name={me.user.display_name} size="sm" /><span className="max-w-36 truncate text-sm font-medium">{me.user.display_name}</span><span aria-hidden className="text-xs text-text-muted">▾</span></span>}>
+                <Menu label="Profile menu" button={<span className="flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-3 shadow-surface transition-all duration-fast hover:bg-background active:scale-[0.96] cursor-pointer"><Avatar name={me.user.display_name} size="sm" /><span className="hidden max-w-36 truncate text-sm font-medium sm:inline">{me.user.display_name}</span><span aria-hidden className="text-xs text-text-muted">▾</span></span>}>
                   {(close) => (
                     <>
                       <div className="px-3 py-2">
@@ -288,7 +396,7 @@ function Shell() {
             </div>
           </header>
 
-          <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-4 py-6">
+          <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6">
             <div key={view.name + ("id" in view ? view.id : "")} className="vf-page">
               {view.name === "spaces" && <Spaces me={me} go={setView} />}
               {view.name === "space" && <SpaceDetail spaceId={view.id} label={view.label} go={setView} />}
@@ -307,7 +415,7 @@ function Shell() {
 function SideItem({
   collapsed, active, label, icon, hint, onClick,
 }: {
-  collapsed: boolean; active: boolean; label: string; icon: string; hint?: string; onClick: () => void;
+  collapsed: boolean; active: boolean; label: string; icon: ReactNode; hint?: string; onClick: () => void;
 }) {
   return (
     <button
@@ -315,13 +423,26 @@ function SideItem({
       title={collapsed ? label : undefined}
       aria-current={active || undefined}
       onClick={onClick}
-      className={`flex min-h-10 w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm transition duration-fast ease-standard focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.99] ${
-        active ? "bg-primary/10 font-medium text-primary" : "text-text hover:bg-background"
+      className={`group flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-fast ease-standard cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.96] ${
+        active
+          ? "bg-primary/15 font-semibold text-primary shadow-xs"
+          : "text-text-muted hover:bg-background hover:text-text active:bg-background/80"
       } ${collapsed ? "justify-center px-0" : ""}`}
     >
-      <span aria-hidden className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-background text-xs font-bold">{icon}</span>
+      <span
+        aria-hidden
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors duration-fast ${
+          active ? "bg-primary text-primary-fg shadow-xs" : "bg-background/80 text-text-muted group-hover:bg-background group-hover:text-text"
+        }`}
+      >
+        {icon}
+      </span>
       {!collapsed && <span className="min-w-0 flex-1 truncate text-left">{label}</span>}
-      {!collapsed && hint && <span className="text-[11px] capitalize text-text-muted">{hint}</span>}
+      {!collapsed && hint && (
+        <span className="rounded bg-background/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+          {hint}
+        </span>
+      )}
     </button>
   );
 }
@@ -339,7 +460,7 @@ function GlobalSearch({ go, spaces }: { go: (v: View) => void; spaces: Me["space
 
   return (
     <div className="relative w-full max-w-xl">
-      <span aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-muted">⌕</span>
+      <IconSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
       <Input
         type="search"
         value={query}
@@ -506,8 +627,8 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
             <Input type="search" placeholder="Search spaces…" aria-label="Search spaces" value={query} onChange={(e) => setQuery(e.target.value)} />
           </span>
           {canCreate && (
-            <Button aria-expanded={showCreate} onClick={() => setShowCreate((v) => !v)}>
-              {showCreate ? "Close" : "+ New space"}
+            <Button onClick={() => setShowCreate(true)}>
+              + New space
             </Button>
           )}
         </div>
@@ -572,7 +693,7 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
         <div className="mt-6">
           <EmptyState
             title={query ? "No spaces match that search" : "No spaces yet"}
-            hint={query ? "Try a different name." : me.user.is_platform_admin ? "Create your first space below." : "Ask an admin to add you to a space."}
+            hint={query ? "Try a different name." : me.user.is_platform_admin ? "Create your first space using the button above." : "Ask an admin to add you to a space."}
           />
         </div>
       )}
@@ -584,7 +705,7 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
           title="Create a space"
           hint="You become its Owner. Add people and groups from inside the space."
         >
-          <form className="flex gap-2" onSubmit={async (e) => {
+          <form className="grid gap-4" onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true);
             try { await api.createSpace(name); setName(""); setShowCreate(false); await load(); toast.success("Space created."); }
@@ -592,17 +713,12 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
             finally { setBusy(false); }
           }}>
             <Input autoFocus placeholder="Space name, e.g. Client work" value={name} onChange={(e) => setName(e.target.value)} required aria-label="Space name" />
-            <Button type="submit" busy={busy}>Create space</Button>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
+              <Button type="submit" busy={busy}>Create space</Button>
+            </div>
           </form>
         </Modal>
-      )}
-      {spaces !== null && visible.length === 0 && (
-        <div className="mt-6">
-          <EmptyState
-            title={query ? "No spaces match that search" : "No spaces yet"}
-            hint={query ? "Try a different name." : me.user.is_platform_admin ? "Create your first space below." : "Ask an admin to add you to a space."}
-          />
-        </div>
       )}
 
     </section>
@@ -620,9 +736,9 @@ function ProjectFavicon({ projectId, name }: { projectId: string; name: string }
     });
     return () => { live = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [projectId]);
-  if (!url) return <Avatar name={name} />;
+  if (!url) return <DefaultProjectIcon name={name} size={40} />;
   return (
-    <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-surface">
       <img src={url} alt={`${name} icon`} className="h-full w-full object-contain" />
     </span>
   );
@@ -1534,12 +1650,12 @@ function Admin({ initialTab }: { initialTab: string }) {
     } catch { setError("Admin access required."); }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (initialTab) setTab(initialTab === "people" ? "people" : initialTab); }, [initialTab]);
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
 
   const SETTING_SECTIONS: { title: string; hint: string; fields: string[] }[] = [
     { title: "Upload & scanning", hint: "Zip-bomb limits, antivirus and CVE lookups for every push.", fields: ["max_compressed_mb", "max_uncompressed_mb", "max_entries", "max_file_mb", "max_ratio", "block_push_on_critical", "scan_timeout_s", "clamd_host", "osv_timeout_s", "osv_cache_hours", "unused_dep_check"] },
     { title: "Access & tokens", hint: "Sessions, API tokens and self-registration.", fields: ["session_hours", "token_default_ttl_days", "max_active_tokens_per_user", "allow_registration"] },
-    { title: "Policy & quotas", hint: "What gets blocked, license rules and per-space limits (0 = unlimited).", fields: ["block_severity", "block_push_on_critical_note", "license_blocklist", "fix_sla_days", "space_quota_mb", "space_member_quota"] },
+    { title: "Policy & quotas", hint: "What gets blocked, license rules and per-space limits (0 = unlimited).", fields: ["block_severity", "license_blocklist", "fix_sla_days", "space_quota_mb", "space_member_quota"] },
     { title: "Notifications", hint: "Webhook for high/critical pushes and outgoing email.", fields: ["webhook_url", "smtp_host", "smtp_port", "smtp_from", "smtp_user", "smtp_password"] },
     { title: "SSO & provisioning", hint: "OIDC sign-in and SCIM user provisioning. Secrets are encrypted at rest.", fields: ["oidc_issuer", "oidc_client_id", "oidc_client_secret", "scim_token", "public_base_url"] },
   ];

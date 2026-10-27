@@ -1,5 +1,6 @@
 -- VibeForge production schema (Postgres). Embedded mode uses data/db.json;
 -- set DATABASE_URL to run against this schema (see docker-compose.yml).
+CREATE EXTENSION IF NOT EXISTS citext;
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email CITEXT UNIQUE NOT NULL, display_name TEXT NOT NULL,
   password_hash TEXT NOT NULL, is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE,

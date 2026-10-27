@@ -1526,7 +1526,7 @@ async fn download_sbom(State(state): State<Shared>, headers: HeaderMap, Path(id)
     };
     let key = f.blob_key.clone();
     drop(store);
-    match tokio::fs::read(state.data_dir.join(&key)).await {
+    match blob_get(&state, &key).await {
         Ok(bytes) => (
             StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/json"),
@@ -1616,7 +1616,7 @@ async fn project_favicon(State(state): State<Shared>, headers: HeaderMap, Path(i
     }
     let Some((key, ctype)) = found else { return err(StatusCode::NOT_FOUND, "No favicon in the latest milestone."); };
     drop(store);
-    match tokio::fs::read(state.data_dir.join(&key)).await {
+    match blob_get(&state, &key).await {
         Ok(bytes) => (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ctype)], bytes).into_response(),
         Err(_) => err(StatusCode::NOT_FOUND, "Favicon data missing."),
     }
@@ -1625,8 +1625,20 @@ async fn project_favicon(State(state): State<Shared>, headers: HeaderMap, Path(i
 async fn serve_blob(State(state): State<Shared>, headers: HeaderMap, Path(key): Path<String>) -> Response {
     let _ = auth!(&state, &headers);
     // Keys are content-addressed; the milestone ACL was checked when the key was handed out.
-    match tokio::fs::read(state.data_dir.join(&key)).await {
-        Ok(bytes) => (StatusCode::OK, bytes).into_response(),
+    match blob_get(&state, &key).await {
+        Ok(bytes) => {
+            let lower = key.to_lowercase();
+            let ctype = if lower.ends_with(".png") { "image/png" }
+                else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") { "image/jpeg" }
+                else if lower.ends_with(".svg") { "image/svg+xml" }
+                else if lower.ends_with(".ico") { "image/x-icon" }
+                else if lower.ends_with(".webp") { "image/webp" }
+                else if lower.ends_with(".gif") { "image/gif" }
+                else if lower.ends_with(".json") { "application/json" }
+                else if lower.ends_with(".zip") { "application/zip" }
+                else { "application/octet-stream" };
+            (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ctype)], bytes).into_response()
+        }
         Err(_) => err(StatusCode::NOT_FOUND, "Not found."),
     }
 }
@@ -2011,7 +2023,7 @@ async fn main() {
         .route("/api/v1/milestones/{id}/fork", post(fork_milestone))
         .route("/api/v1/milestones/{id}/screenshots", post(add_screenshot))
         .route("/api/v1/findings/{id}/ignore", post(ignore_finding))
-        .route("/api/v1/blobs/{key}", get(serve_blob))
+        .route("/api/v1/blobs/{*key}", get(serve_blob))
         .route("/api/v1/admin/users", get(admin_users).post(admin_create_user))
         .route("/api/v1/admin/users/{id}/block", post(admin_block))
         .route("/api/v1/admin/users/{id}/unblock", post(admin_unblock))

@@ -185,19 +185,19 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const BUTTON_VARIANTS: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "bg-primary text-primary-fg shadow-surface hover:bg-primary-hover",
-  secondary: "border border-border bg-surface text-text shadow-surface hover:bg-background",
-  ghost: "text-text-muted hover:bg-background hover:text-text",
-  danger: "bg-error text-error-fg hover:opacity-90",
+  primary: "bg-primary text-primary-fg shadow-surface hover:bg-primary-hover hover:shadow-raised hover:-translate-y-px active:translate-y-0 active:scale-[0.96] active:brightness-95 active:shadow-surface",
+  secondary: "border border-border bg-surface text-text shadow-surface hover:bg-background hover:border-text-muted/60 hover:-translate-y-px active:translate-y-0 active:scale-[0.96] active:bg-background/90 active:shadow-inner",
+  ghost: "text-text-muted hover:bg-background hover:text-text active:scale-[0.95] active:bg-text/10",
+  danger: "bg-error text-error-fg shadow-surface hover:brightness-105 hover:-translate-y-px active:translate-y-0 active:scale-[0.96] active:brightness-90",
 };
 
 export function Button({ variant = "primary", size = "md", busy, disabled, className, children, ...rest }: ButtonProps) {
   return (
     <button
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-md font-medium transition duration-fast ease-standard",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-        "active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50",
+        "inline-flex items-center justify-center gap-2 rounded-md font-medium cursor-pointer select-none transition-all duration-fast ease-standard",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2",
+        "active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50",
         size === "sm" ? "min-h-9 px-3 py-1.5 text-sm" : "min-h-11 px-4 py-2 text-sm",
         BUTTON_VARIANTS[variant],
         className,
@@ -349,9 +349,9 @@ export function Tabs({
               document.getElementById(`${ariaLabel}-tab-${next.key}`)?.focus();
             }}
             className={cx(
-              "relative min-h-11 px-3 py-2 text-sm font-medium transition duration-fast ease-standard",
-              "focus-visible:outline-2 focus-visible:outline-primary",
-              active ? "text-primary" : "text-text-muted hover:text-text",
+              "relative min-h-11 cursor-pointer select-none rounded-md px-3 py-2 text-sm font-medium transition-all duration-fast ease-standard active:scale-[0.96]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+              active ? "text-primary" : "text-text-muted hover:bg-background/60 hover:text-text",
             )}
           >
             {item.label}
