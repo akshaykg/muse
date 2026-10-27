@@ -274,7 +274,14 @@ async fn send_email(state: &Shared, to: &str, subject: &str, body_text: &str) ->
     let mut buf = [0u8; 1024];
     let _ = stream.read(&mut buf).await;
     let from = if settings.smtp_from.is_empty() { "vibeforge@localhost".to_string() } else { settings.smtp_from.clone() };
-    let script = format!("HELO vibeforge\r\nMAIL FROM:<{from}>\r\nRCPT TO:<{to}>\r\nDATA\r\nSubject: {subject}\r\nFrom: {from}\r\nTo: {to}\r\n\r\n{body_text}\r\n.\r\nQUIT\r\n");
+    let auth = if !settings.smtp_user.is_empty() {
+        use base64::Engine;
+        let enc = base64::engine::general_purpose::STANDARD;
+        let user_b64 = enc.encode(&settings.smtp_user);
+        let pass_b64 = enc.encode(open_secret(state, &settings.smtp_password));
+        format!("AUTH LOGIN\r\n{user_b64}\r\n{pass_b64}\r\n")
+    } else { String::new() };
+    let script = format!("HELO vibeforge\r\n{auth}MAIL FROM:<{from}>\r\nRCPT TO:<{to}>\r\nDATA\r\nSubject: {subject}\r\nFrom: {from}\r\nTo: {to}\r\n\r\n{body_text}\r\n.\r\nQUIT\r\n");
     stream.write_all(script.as_bytes()).await.map_err(|e| e.to_string())?;
     let n = stream.read(&mut buf).await.map_err(|e| e.to_string())?;
     let resp = String::from_utf8_lossy(&buf[..n]).to_string();
@@ -700,21 +707,17 @@ fn base64_decode_url(input: &str) -> Result<Vec<u8>, ()> {
 }
 
 // SCIM 2.0 provisioning (bearer = Settings scim_token)
-fn open_secret_bare(settings: &Settings) -> String {
-    // scim_token may be sealed; compare against the opened value when possible.
-    // Sealed values start with enc:v1: and need AppState — handled by prefix check in caller.
-    settings.scim_token.clone()
-}
-
-fn scim_authorized(state_settings: &Settings, headers: &HeaderMap) -> bool {
+fn scim_authorized(state: &Shared, state_settings: &Settings, headers: &HeaderMap) -> bool {
     if state_settings.scim_token.is_empty() { return false; }
+    let expected = open_secret(state, &state_settings.scim_token);
     headers.get("authorization").and_then(|v| v.to_str().ok())
-        .map(|v| v.strip_prefix("Bearer ").map(|t| t == open_secret_bare(state_settings)).unwrap_or(false)).unwrap_or(false)
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|t| t == expected).unwrap_or(false)
 }
 
 async fn scim_create_user(State(state): State<Shared>, headers: HeaderMap, Json(body): Json<serde_json::Value>) -> Response {
     let settings = state.store.read().await.settings.clone();
-    if !scim_authorized(&settings, &headers) { return err(StatusCode::UNAUTHORIZED, "SCIM token required."); }
+    if !scim_authorized(&state, &settings, &headers) { return err(StatusCode::UNAUTHORIZED, "SCIM token required."); }
     let email = body["userName"].as_str().or_else(|| body["emails"][0]["value"].as_str()).unwrap_or("").to_lowercase();
     let name = body["displayName"].as_str().unwrap_or(&email).to_string();
     if email.is_empty() { return err(StatusCode::BAD_REQUEST, "userName (email) is required."); }
@@ -741,7 +744,7 @@ async fn scim_create_user(State(state): State<Shared>, headers: HeaderMap, Json(
 
 async fn scim_list_users(State(state): State<Shared>, headers: HeaderMap) -> Response {
     let settings = state.store.read().await.settings.clone();
-    if !scim_authorized(&settings, &headers) { return err(StatusCode::UNAUTHORIZED, "SCIM token required."); }
+    if !scim_authorized(&state, &settings, &headers) { return err(StatusCode::UNAUTHORIZED, "SCIM token required."); }
     let store = state.store.read().await;
     let resources: Vec<_> = store.users.values().map(|u| serde_json::json!({
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"], "id": u.id, "userName": u.email,
@@ -1072,9 +1075,7 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
 
     // Blob-store the original zip + index every file for browsing without unzip.
     let blob_key = format!("blobs/{}/{}.zip", &project.id, scanner::sha256_hex(&body));
-    let blob_path = state.data_dir.join(&blob_key);
-    if let Some(parent) = blob_path.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
-    let _ = tokio::fs::write(&blob_path, &body).await;
+    let _ = blob_put(&state, &blob_key, &body).await;
 
     // Open-standard manifest: vibe/manifest.json wins, headers are the fallback.
     let mut manifest = ArtifactManifest::default();
@@ -1093,9 +1094,7 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
         let rel = f.strip_prefix(&tmp).unwrap_or(f).to_string_lossy().replace('\\', "/");
         let bytes = tokio::fs::read(f).await.unwrap_or_default();
         let key = format!("files/{}/{}", milestone_id, scanner::sha256_hex(&bytes));
-        let dest = state.data_dir.join(&key);
-        if let Some(parent) = dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
-        let _ = tokio::fs::write(&dest, &bytes).await;
+        let _ = blob_put(&state, &key, &bytes).await;
         stored.push(StoredFile { milestone_id: milestone_id.clone(), path: rel, blob_key: key, size_bytes: bytes.len() as u64, sha256: scanner::sha256_hex(&bytes) });
     }
 
@@ -1104,9 +1103,7 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
     let (sbom_doc, sbom_pkgs, sbom_tool) = scanner::generate_sbom(&tmp, &deps, &project.slug);
     let sbom_bytes = serde_json::to_vec_pretty(&sbom_doc).unwrap_or_default();
     let sbom_key = format!("files/{}/{}", milestone_id, scanner::sha256_hex(&sbom_bytes));
-    let sbom_dest = state.data_dir.join(&sbom_key);
-    if let Some(parent) = sbom_dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
-    let _ = tokio::fs::write(&sbom_dest, &sbom_bytes).await;
+    let _ = blob_put(&state, &sbom_key, &sbom_bytes).await;
     stored.push(StoredFile {
         milestone_id: milestone_id.clone(), path: "SBOM.json".into(),
         blob_key: sbom_key, size_bytes: sbom_bytes.len() as u64, sha256: scanner::sha256_hex(&sbom_bytes),
@@ -1340,9 +1337,7 @@ async fn add_screenshot(State(state): State<Shared>, headers: HeaderMap, Path(id
     if body.is_empty() || body.len() > 10 * 1024 * 1024 { return err(StatusCode::BAD_REQUEST, "Send one image (max 10 MB)."); }
     let name = { let n = header_str(&headers, "x-filename"); if n.is_empty() { "screenshot.png".into() } else { n } };
     let key = format!("shots/{}/{}-{}", id, scanner::sha256_hex(&body), name);
-    let dest = state.data_dir.join(&key);
-    if let Some(parent) = dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
-    let _ = tokio::fs::write(&dest, &body).await;
+    let _ = blob_put(&state, &key, &body).await;
     let mut store = state.store.write().await;
     if let Some(m) = store.milestones.get_mut(&id) { m.screenshots.push(key.clone()); }
     drop(store);
