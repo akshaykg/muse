@@ -30,6 +30,8 @@ import {
   IconMarketplace,
   IconShieldAlert,
   IconPeople,
+  IconUser,
+  IconGroup,
   IconSettings,
   IconChevronLeft,
   IconChevronRight,
@@ -37,6 +39,7 @@ import {
   IconMenu,
   IconClose,
 } from "./components/icons";
+import { NotFoundScreen, ServerErrorScreen, ErrorBoundary } from "./components/ErrorScreens";
 
 type Me = Awaited<ReturnType<typeof api.me>>;
 type View =
@@ -45,12 +48,18 @@ type View =
   | { name: "project"; id: string; milestoneId?: string }
   | { name: "profile" }
   | { name: "admin"; tab: string }
-  | { name: "marketplace" };
+  | { name: "marketplace" }
+  | { name: "404" }
+  | { name: "500"; error?: string };
 
-/** Shareable URLs: /spaces/:id  /projects/:id  /projects/:id/milestones/:mid  /profile  /admin/:tab */
+/** Shareable URLs: /spaces/:id  /projects/:id  /projects/:id/milestones/:mid  /profile  /admin/:tab  /404  /500 */
 function parsePath(path: string): View {
   const parts = path.split("/").filter(Boolean);
-  if (parts[0] === "spaces" && parts[1]) return { name: "space", id: parts[1], label: "" };
+  if (parts.length === 0) return { name: "spaces" };
+  if (parts[0] === "spaces") {
+    if (parts[1]) return { name: "space", id: parts[1], label: "" };
+    return { name: "spaces" };
+  }
   if (parts[0] === "projects" && parts[1]) {
     return parts[2] === "milestones" && parts[3]
       ? { name: "project", id: parts[1], milestoneId: parts[3] }
@@ -59,7 +68,9 @@ function parsePath(path: string): View {
   if (parts[0] === "profile") return { name: "profile" };
   if (parts[0] === "marketplace") return { name: "marketplace" };
   if (parts[0] === "admin") return { name: "admin", tab: parts[1] ?? "vulns" };
-  return { name: "spaces" };
+  if (parts[0] === "404") return { name: "404" };
+  if (parts[0] === "500") return { name: "500" };
+  return { name: "404" };
 }
 
 function toPath(v: View): string {
@@ -69,6 +80,8 @@ function toPath(v: View): string {
     case "profile": return "/profile";
     case "marketplace": return "/marketplace";
     case "admin": return `/admin/${v.tab}`;
+    case "404": return "/404";
+    case "500": return "/500";
     default: return "/";
   }
 }
@@ -95,7 +108,9 @@ function sevTone(sev: string): "danger" | "warning" | "neutral" {
 export default function App() {
   return (
     <ToastProvider>
-      <Shell />
+      <ErrorBoundary>
+        <Shell />
+      </ErrorBoundary>
     </ToastProvider>
   );
 }
@@ -110,10 +125,35 @@ function Shell() {
     return v >= 200 && v <= 420 ? v : 264;
   });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [settingsCollapsed, setSettingsCollapsed] = useState(() => localStorage.getItem("vf_settings_collapsed") === "1");
+  const [adminCounts, setAdminCounts] = useState<{ vulns?: number; users?: number; groups?: number }>({});
+
+  const toggleSettingsCollapsed = useCallback(() => {
+    setSettingsCollapsed((v) => {
+      localStorage.setItem("vf_settings_collapsed", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
 
   useEffect(() => {
     setMobileNavOpen(false);
   }, [view]);
+
+  useEffect(() => {
+    if (view.name === "admin" && me?.user.is_platform_admin) {
+      Promise.all([
+        api.adminVulns().catch(() => null),
+        api.adminUsers().catch(() => null),
+        api.adminGroups().catch(() => null),
+      ]).then(([v, u, g]) => {
+        setAdminCounts({
+          vulns: v?.total_open,
+          users: u?.length,
+          groups: g?.length,
+        });
+      });
+    }
+  }, [view.name, me]);
 
   const setView = useCallback((v: View, replace = false) => {
     const path = toPath(v);
@@ -174,6 +214,7 @@ function Shell() {
       return !v;
     });
   };
+
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -202,21 +243,56 @@ function Shell() {
           style={collapsed ? undefined : { width: sideW }}
           className={`hidden h-full shrink-0 flex-col overflow-hidden border-r border-border bg-surface lg:relative lg:flex ${collapsed ? "w-16" : ""}`}
         >
-          <button
-            type="button"
-            onClick={() => setView({ name: "spaces" })}
-            className="flex items-center gap-2.5 border-b border-border px-3.5 py-3 text-left transition-all duration-fast hover:bg-background active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer select-none"
-          >
-            <VibeForgeLogo size={32} />
-            {!collapsed && (
-              <span className="min-w-0">
-                <span className="block truncate font-serif text-lg font-bold leading-tight">VibeForge</span>
-                <span className="block text-xs leading-tight text-text-muted">Milestones, not git</span>
-              </span>
+          {/* Nav collapse at top: icon button to toggle — fixed h-16 aligned with top nav header */}
+          <div className={`flex h-16 shrink-0 items-center border-b border-border px-3 ${collapsed ? "justify-center" : "justify-between"}`}>
+            {!collapsed ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setView({ name: "spaces" })}
+                  className="flex items-center gap-2.5 text-left transition-all duration-fast hover:opacity-85 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer select-none"
+                >
+                  <VibeForgeLogo size={28} />
+                  <span className="min-w-0">
+                    <span className="block truncate font-serif text-base font-bold leading-tight">VibeForge</span>
+                    <span className="block text-[10px] leading-tight text-text-muted">Milestones, not git</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleCollapsed}
+                  aria-label="Collapse sidebar"
+                  title="Collapse sidebar"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/50 text-text-muted transition-all duration-fast hover:border-border hover:bg-background hover:text-text active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                >
+                  <IconChevronLeft />
+                </button>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setView({ name: "spaces" })}
+                  aria-label="VibeForge home"
+                  title="VibeForge"
+                  className="flex items-center justify-center rounded-md p-0.5 transition-all duration-fast hover:bg-background active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                >
+                  <VibeForgeLogo size={20} />
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleCollapsed}
+                  aria-label="Expand sidebar"
+                  title="Expand sidebar"
+                  className="flex h-6 w-6 items-center justify-center rounded-md border border-border/70 bg-background/50 text-text-muted transition-all duration-fast hover:border-border hover:bg-background hover:text-text active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                >
+                  <IconChevronRight />
+                </button>
+              </div>
             )}
-          </button>
+          </div>
 
-          <nav aria-label="Spaces and settings" className="flex-1 overflow-y-auto p-2">
+          <nav aria-label="Spaces" className="flex-1 overflow-y-auto p-2">
             <SideItem collapsed={collapsed} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => setView({ name: "spaces" })} />
             {!collapsed && <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>}
             <div className="space-y-0.5">
@@ -247,20 +323,21 @@ function Shell() {
 
             <div className="my-2 border-t border-border" />
             <SideItem collapsed={collapsed} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => setView({ name: "marketplace" })} />
-            {perms.isAdmin && (
-              <>
-                {!collapsed && <p className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Settings</p>}
-                {collapsed && <div className="my-3 border-t border-border" />}
-                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "vulns"} label="Vulnerabilities" icon={<IconShieldAlert />} onClick={() => setView({ name: "admin", tab: "vulns" })} />
-                <SideItem collapsed={collapsed} active={view.name === "admin" && (view.tab === "people" || view.tab === "groups")} label="People & groups" icon={<IconPeople />} onClick={() => setView({ name: "admin", tab: "people" })} />
-                <SideItem collapsed={collapsed} active={view.name === "admin" && view.tab === "settings"} label="App settings" icon={<IconSettings />} onClick={() => setView({ name: "admin", tab: "settings" })} />
-              </>
-            )}
           </nav>
 
-          <div className="border-t border-border p-2">
-            <SideItem collapsed={collapsed} active={false} label={collapsed ? "Expand sidebar" : "Collapse sidebar"} icon={collapsed ? <IconChevronRight /> : <IconChevronLeft />} onClick={toggleCollapsed} />
-          </div>
+          {/* App settings moved to bottom of left nav — single button */}
+          {perms.isAdmin && (
+            <div className="border-t border-border p-2">
+              <SideItem
+                collapsed={collapsed}
+                active={view.name === "admin"}
+                label="App settings"
+                icon={<IconSettings />}
+                hint={collapsed ? "App settings" : undefined}
+                onClick={() => setView({ name: "admin", tab: "vulns" })}
+              />
+            </div>
+          )}
 
           {!collapsed && (
             <div
@@ -272,6 +349,106 @@ function Shell() {
             />
           )}
         </aside>
+
+        {/* Settings left nav — full height like main nav, collapsable, attached next to main nav, no gap */}
+        {view.name === "admin" && (
+          <aside
+            aria-label="Settings navigation"
+            style={settingsCollapsed ? undefined : { width: 230 }}
+            className={`hidden h-full shrink-0 flex-col overflow-hidden border-r border-border bg-surface lg:relative lg:flex transition-[width] duration-fast ${
+              settingsCollapsed ? "w-16" : ""
+            }`}
+          >
+            {/* Header: title + collapse button at top — fixed h-16 aligned with top nav header */}
+            <div className={`flex h-16 shrink-0 items-center border-b border-border px-3 ${settingsCollapsed ? "justify-center" : "justify-between"}`}>
+              {!settingsCollapsed ? (
+                <>
+                  <div className="min-w-0">
+                    <span className="block truncate font-serif text-sm font-bold uppercase tracking-wider text-text">Settings</span>
+                    <span className="block truncate text-[10px] text-text-muted">Platform admin</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleSettingsCollapsed}
+                    aria-label="Collapse settings sidebar"
+                    title="Collapse settings sidebar"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/50 text-text-muted transition-all duration-fast hover:border-border hover:bg-background hover:text-text active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                  >
+                    <IconChevronLeft />
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={toggleSettingsCollapsed}
+                  aria-label="Expand settings sidebar"
+                  title="Expand settings sidebar"
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/50 text-text-muted transition-all duration-fast hover:border-border hover:bg-background hover:text-text active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                >
+                  <IconChevronRight />
+                </button>
+              )}
+            </div>
+
+            <nav aria-label="Settings navigation" className="flex-1 overflow-y-auto p-2 space-y-1">
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "vulns"}
+                label="Vulnerabilities"
+                icon={<IconShieldAlert />}
+                badge={
+                  adminCounts.vulns != null ? (
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                      view.tab === "vulns" ? "bg-primary/25 text-primary" : adminCounts.vulns > 0 ? "bg-danger/15 text-danger font-bold" : "bg-background text-text-muted"
+                    }`}>
+                      {adminCounts.vulns}
+                    </span>
+                  ) : undefined
+                }
+                onClick={() => setView({ name: "admin", tab: "vulns" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "people"}
+                label="People"
+                icon={<IconUser />}
+                badge={
+                  adminCounts.users != null ? (
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                      view.tab === "people" ? "bg-primary/25 text-primary" : "bg-background text-text-muted"
+                    }`}>
+                      {adminCounts.users}
+                    </span>
+                  ) : undefined
+                }
+                onClick={() => setView({ name: "admin", tab: "people" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "groups"}
+                label="Groups"
+                icon={<IconGroup />}
+                badge={
+                  adminCounts.groups != null ? (
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                      view.tab === "groups" ? "bg-primary/25 text-primary" : "bg-background text-text-muted"
+                    }`}>
+                      {adminCounts.groups}
+                    </span>
+                  ) : undefined
+                }
+                onClick={() => setView({ name: "admin", tab: "groups" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings"}
+                label="App settings"
+                icon={<IconSettings />}
+                onClick={() => setView({ name: "admin", tab: "settings" })}
+              />
+            </nav>
+          </aside>
+        )}
 
         {/* Mobile Navigation Drawer Overlay */}
         {mobileNavOpen && (
@@ -304,7 +481,7 @@ function Shell() {
                 </button>
               </div>
 
-              <nav aria-label="Mobile spaces and settings" className="flex-1 overflow-y-auto py-3 space-y-1">
+              <nav aria-label="Mobile spaces" className="flex-1 overflow-y-auto py-3 space-y-1">
                 <SideItem collapsed={false} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => { setView({ name: "spaces" }); setMobileNavOpen(false); }} />
                 <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>
                 <div className="space-y-0.5">
@@ -335,23 +512,31 @@ function Shell() {
                 )}
                 <div className="my-2 border-t border-border" />
                 <SideItem collapsed={false} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => { setView({ name: "marketplace" }); setMobileNavOpen(false); }} />
-                {perms.isAdmin && (
-                  <>
-                    <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Settings</p>
-                    <SideItem collapsed={false} active={view.name === "admin" && view.tab === "vulns"} label="Vulnerabilities" icon={<IconShieldAlert />} onClick={() => { setView({ name: "admin", tab: "vulns" }); setMobileNavOpen(false); }} />
-                    <SideItem collapsed={false} active={view.name === "admin" && (view.tab === "people" || view.tab === "groups")} label="People & groups" icon={<IconPeople />} onClick={() => { setView({ name: "admin", tab: "people" }); setMobileNavOpen(false); }} />
-                    <SideItem collapsed={false} active={view.name === "admin" && view.tab === "settings"} label="App settings" icon={<IconSettings />} onClick={() => { setView({ name: "admin", tab: "settings" }); setMobileNavOpen(false); }} />
-                  </>
-                )}
               </nav>
+
+              {/* Mobile App settings at bottom of left nav */}
+              {perms.isAdmin && (
+                <div className="border-t border-border pt-2">
+                  <SideItem
+                    collapsed={false}
+                    active={view.name === "admin"}
+                    label="App settings"
+                    icon={<IconSettings />}
+                    onClick={() => {
+                      setView({ name: "admin", tab: "vulns" });
+                      setMobileNavOpen(false);
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         )}
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {/* Top nav: search + profile only (fixed, never scrolls) */}
-          <header className="z-sticky shrink-0 border-b border-border bg-surface/95 shadow-surface backdrop-blur">
-            <div className="flex items-center gap-2.5 px-3 py-2.5 sm:px-4">
+          {/* Top nav: search + profile only (fixed, never scrolls) — fixed h-16 aligned with sidebars */}
+          <header className="z-sticky h-16 shrink-0 border-b border-border bg-surface/95 shadow-surface backdrop-blur">
+            <div className="flex h-full items-center gap-2.5 px-3 sm:px-4">
               <div className="flex items-center gap-2 lg:hidden">
                 <button
                   type="button"
@@ -397,14 +582,30 @@ function Shell() {
           </header>
 
           <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6">
-            <div key={view.name + ("id" in view ? view.id : "")} className="vf-page">
-              {view.name === "spaces" && <Spaces me={me} go={setView} />}
-              {view.name === "space" && <SpaceDetail spaceId={view.id} label={view.label} go={setView} />}
-              {view.name === "project" && <ProjectDetail projectId={view.id} milestoneId={view.milestoneId} go={setView} />}
-              {view.name === "profile" && <Profile />}
-              {view.name === "admin" && <Admin initialTab={view.tab} />}
-              {view.name === "marketplace" && <Marketplace go={setView} />}
-            </div>
+            <ErrorBoundary onHome={() => setView({ name: "spaces" })}>
+              <div key={view.name + ("id" in view ? view.id : "")} className="vf-page">
+                {view.name === "spaces" && <Spaces me={me} go={setView} />}
+                {view.name === "space" && <SpaceDetail spaceId={view.id} label={view.label} go={setView} />}
+                {view.name === "project" && <ProjectDetail projectId={view.id} milestoneId={view.milestoneId} go={setView} />}
+                {view.name === "profile" && <Profile />}
+                {view.name === "admin" && <Admin initialTab={view.tab} go={setView} onCountsUpdate={setAdminCounts} />}
+                {view.name === "marketplace" && <Marketplace go={setView} />}
+                {view.name === "404" && (
+                  <NotFoundScreen
+                    onHome={() => setView({ name: "spaces" })}
+                    onBack={() => window.history.back()}
+                    onMarketplace={() => setView({ name: "marketplace" })}
+                  />
+                )}
+                {view.name === "500" && (
+                  <ServerErrorScreen
+                    error={view.error ?? "An unexpected server error occurred."}
+                    resetError={() => setView({ name: "spaces" })}
+                    onHome={() => setView({ name: "spaces" })}
+                  />
+                )}
+              </div>
+            </ErrorBoundary>
           </main>
         </div>
       </div>
@@ -413,9 +614,9 @@ function Shell() {
 }
 
 function SideItem({
-  collapsed, active, label, icon, hint, onClick,
+  collapsed, active, label, icon, hint, badge, onClick,
 }: {
-  collapsed: boolean; active: boolean; label: string; icon: ReactNode; hint?: string; onClick: () => void;
+  collapsed: boolean; active: boolean; label: string; icon: ReactNode; hint?: string; badge?: ReactNode; onClick: () => void;
 }) {
   return (
     <button
@@ -423,7 +624,7 @@ function SideItem({
       title={collapsed ? label : undefined}
       aria-current={active || undefined}
       onClick={onClick}
-      className={`group flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-fast ease-standard cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.96] ${
+      className={`group relative flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-fast ease-standard cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.96] ${
         active
           ? "bg-primary/15 font-semibold text-primary shadow-xs"
           : "text-text-muted hover:bg-background hover:text-text active:bg-background/80"
@@ -442,6 +643,12 @@ function SideItem({
         <span className="rounded bg-background/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
           {hint}
         </span>
+      )}
+      {!collapsed && badge && (
+        <span className="shrink-0">{badge}</span>
+      )}
+      {collapsed && badge && (
+        <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-primary" />
       )}
     </button>
   );
@@ -777,6 +984,13 @@ function SpaceDetail({ spaceId, label, go }: { spaceId: string; label: string; g
   const issueTotal = (projects ?? []).reduce((n, pr) => n + pr.open_findings, 0);
   const milestoneTotal = (projects ?? []).reduce((n, pr) => n + pr.milestones, 0);
 
+  if (error) {
+    if (error.includes("404") || error.toLowerCase().includes("not found")) {
+      return <NotFoundScreen onHome={() => go({ name: "spaces" })} onBack={() => window.history.back()} />;
+    }
+    return <ServerErrorScreen error={error} resetError={() => void load()} onHome={() => go({ name: "spaces" })} />;
+  }
+
   return (
     <section aria-labelledby="space-title">
       <Button variant="ghost" size="sm" onClick={() => go({ name: "spaces" })}>← All spaces</Button>
@@ -971,9 +1185,13 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
   useEffect(() => { if (milestoneId) setSelectedState(milestoneId); }, [milestoneId]);
 
   if (!data) {
-    return error
-      ? <Alert>{error}</Alert>
-      : <div className="space-y-3"><Skeleton className="h-10 w-64" /><Skeleton className="h-40" /></div>;
+    if (error) {
+      if (error.includes("404") || error.toLowerCase().includes("not found")) {
+        return <NotFoundScreen onHome={() => go({ name: "spaces" })} onBack={() => window.history.back()} />;
+      }
+      return <ServerErrorScreen error={error} resetError={() => void load()} onHome={() => go({ name: "spaces" })} />;
+    }
+    return <div className="space-y-3"><Skeleton className="h-10 w-64" /><Skeleton className="h-40" /></div>;
   }
 
   return (
@@ -1630,7 +1848,11 @@ function Marketplace({ go }: { go: (v: View) => void }) {
 
 // ------------------------------------------------------------------- admin
 
-function Admin({ initialTab }: { initialTab: string }) {
+function Admin({ initialTab, go, onCountsUpdate }: {
+  initialTab: string;
+  go?: (v: View) => void;
+  onCountsUpdate?: (counts: { vulns?: number; users?: number; groups?: number }) => void;
+}) {
   const [tab, setTab] = useState(initialTab || "vulns");
   const [users, setUsers] = useState<Awaited<ReturnType<typeof api.adminUsers>>>([]);
   const [groups, setGroups] = useState<Awaited<ReturnType<typeof api.adminGroups>>>([]);
@@ -1647,10 +1869,16 @@ function Admin({ initialTab }: { initialTab: string }) {
     try {
       const [u, g, v, st] = await Promise.all([api.adminUsers(), api.adminGroups(), api.adminVulns(), api.settings()]);
       setUsers(u); setGroups(g); setVulns(v); setSettings(st);
+      onCountsUpdate?.({ vulns: v?.total_open, users: u.length, groups: g.length });
     } catch { setError("Admin access required."); }
-  }, []);
+  }, [onCountsUpdate]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
+
+  const selectTab = (nextTab: string) => {
+    setTab(nextTab);
+    go?.({ name: "admin", tab: nextTab });
+  };
 
   const SETTING_SECTIONS: { title: string; hint: string; fields: string[] }[] = [
     { title: "Upload & scanning", hint: "Zip-bomb limits, antivirus and CVE lookups for every push.", fields: ["max_compressed_mb", "max_uncompressed_mb", "max_entries", "max_file_mb", "max_ratio", "block_push_on_critical", "scan_timeout_s", "clamd_host", "osv_timeout_s", "osv_cache_hours", "unused_dep_check"] },
@@ -1663,25 +1891,38 @@ function Admin({ initialTab }: { initialTab: string }) {
 
   return (
     <section aria-labelledby="admin-title">
-      <h2 id="admin-title" className="font-serif text-3xl font-bold">Settings &amp; admin</h2>
-      <p className="mt-1 text-sm text-text-muted">One place for people, groups, safety, and app settings — reached from the single Settings button.</p>
-      {error && <div className="mt-4"><Alert>{error}</Alert></div>}
+      <div className="border-b border-border pb-4">
+        <h2 id="admin-title" className="font-serif text-2xl sm:text-3xl font-bold">
+          {tab === "vulns" && "Vulnerabilities"}
+          {tab === "people" && "People & access"}
+          {tab === "groups" && "Groups & teams"}
+          {tab === "settings" && "App settings"}
+        </h2>
+        <p className="mt-1 text-sm text-text-muted">
+          {tab === "vulns" && `${vulns?.total_open ?? 0} open (${vulns?.critical ?? 0} fix-now) across every project. Contact leaves a to-do on their latest milestone.`}
+          {tab === "people" && `${users.length} people. Block stops all sign-ins and pushes instantly.`}
+          {tab === "groups" && `${groups.length} groups. Give a group a role in a space and every member inherits it.`}
+          {tab === "settings" && "Platform configurations: upload limits, policies, quotas, notifications and SSO."}
+        </p>
+        {error && <div className="mt-3"><Alert variant="error">{error}</Alert></div>}
+      </div>
 
-      <div className="mt-5">
+      {/* Mobile Tab switcher — visible only on screens where desktop sidebar is hidden */}
+      <div className="lg:hidden mt-4">
         <Tabs
-          ariaLabel="Admin"
+          ariaLabel="Settings sections"
           value={tab}
-          onChange={setTab}
+          onChange={selectTab}
           items={[
-            { key: "vulns", label: `Vulnerabilities${vulns ? ` (${vulns.total_open})` : ""}` },
-            { key: "people", label: "People" },
-            { key: "groups", label: "Groups" },
-            { key: "settings", label: "App settings" },
+            { key: "vulns", label: `Vulns${vulns ? ` (${vulns.total_open})` : ""}` },
+            { key: "people", label: `People (${users.length})` },
+            { key: "groups", label: `Groups (${groups.length})` },
+            { key: "settings", label: "Settings" },
           ]}
         />
       </div>
 
-      <div role="tabpanel" className="mt-5">
+      <div role="region" aria-label="Settings panel content" className="mt-6">
         {tab === "vulns" && (
           <div>
             {vulns
@@ -1841,7 +2082,7 @@ function Admin({ initialTab }: { initialTab: string }) {
             <p className="mt-2 text-right text-xs text-text-muted">Saves to the database and takes effect on the next request — no restart.</p>
           </form>
         )}
-      </div>
+        </div>
     </section>
   );
 }

@@ -114,15 +114,53 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes vf-float {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-10px) rotate(2deg); }
+}
+@keyframes vf-float-slow {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-16px) rotate(-3deg); }
+}
+@keyframes vf-spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes vf-spin-reverse {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+@keyframes vf-pulse-glow {
+  0%, 100% { opacity: 0.4; transform: scale(0.98); }
+  50% { opacity: 0.9; transform: scale(1.06); }
+}
+@keyframes vf-flicker {
+  0%, 100% { opacity: 0.95; }
+  10% { opacity: 0.25; }
+  15% { opacity: 0.9; }
+  25% { opacity: 0.2; }
+  30% { opacity: 1; }
+  70% { opacity: 0.65; }
+  72% { opacity: 0.2; }
+  75% { opacity: 0.95; }
+}
+
 .vf-page { animation: vf-rise 200ms cubic-bezier(0.2, 0, 0, 1); }
 .vf-pop { animation: vf-pop 120ms cubic-bezier(0.2, 0, 0, 1); transform-origin: top right; }
 .vf-toast { animation: vf-toast-in 200ms cubic-bezier(0.2, 0, 0, 1); }
+.vf-float { animation: vf-float 5s ease-in-out infinite; }
+.vf-float-slow { animation: vf-float-slow 7s ease-in-out infinite; }
+.vf-spin-slow { animation: vf-spin-slow 24s linear infinite; transform-origin: center; }
+.vf-spin-reverse { animation: vf-spin-reverse 18s linear infinite; transform-origin: center; }
+.vf-pulse-glow { animation: vf-pulse-glow 3s ease-in-out infinite; transform-origin: center; }
+.vf-flicker { animation: vf-flicker 2.5s infinite; }
 
 /* No motion at all for people who ask for it (toasts.md, taste). */
 @media (prefers-reduced-motion: reduce) {
-  .vf-page, .vf-pop, .vf-toast { animation: none; }
+  .vf-page, .vf-pop, .vf-toast, .vf-float, .vf-float-slow, .vf-spin-slow, .vf-spin-reverse, .vf-pulse-glow, .vf-flicker { animation: none; }
   *, *::before, *::after {
     transition-duration: 0ms !important;
     animation-duration: 0ms !important;
   }
 }
+
