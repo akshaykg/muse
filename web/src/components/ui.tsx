@@ -247,6 +247,50 @@ export function Label({ children }: { children: ReactNode }) {
   return <span className="text-sm font-medium text-text">{children}</span>;
 }
 
+export function Toggle({
+  checked,
+  onChange,
+  disabled,
+  label,
+  description,
+  id,
+}: {
+  checked: boolean;
+  onChange: (val: boolean) => void;
+  disabled?: boolean;
+  label?: string;
+  description?: string;
+  id?: string;
+}) {
+  return (
+    <div className={`flex items-start justify-between gap-3 select-none ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
+      {(label || description) && (
+        <div className="flex-1 min-w-0 pr-2">
+          {label && <span className="block text-sm font-medium text-text">{label}</span>}
+          {description && <span className="block text-xs text-text-muted mt-0.5 leading-relaxed">{description}</span>}
+        </div>
+      )}
+      <button
+        type="button"
+        role="switch"
+        id={id}
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-fast ease-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-95 ${
+          checked ? "bg-primary" : "bg-border"
+        }`}
+      >
+        <span
+          className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm ring-0 transition-transform duration-fast ease-standard ${
+            checked ? "translate-x-5" : "translate-x-0"
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- display
 
 export function Alert({ variant = "error", children }: { variant?: "error" | "warning" | "success" | "info"; children: ReactNode }) {

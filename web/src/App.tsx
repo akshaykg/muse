@@ -20,6 +20,7 @@ import {
   ToastProvider,
   usePermission,
   useToast,
+  Toggle,
   type SpaceRoleName,
 } from "./components/ui";
 import {
@@ -33,6 +34,11 @@ import {
   IconUser,
   IconGroup,
   IconSettings,
+  IconUploadCloud,
+  IconKey,
+  IconSliders,
+  IconBell,
+  IconLock,
   IconChevronLeft,
   IconChevronRight,
   IconSearch,
@@ -40,6 +46,7 @@ import {
   IconClose,
 } from "./components/icons";
 import { NotFoundScreen, ServerErrorScreen, ErrorBoundary } from "./components/ErrorScreens";
+import { AdminSettings, type AdminSettingsTab } from "./components/AdminSettings";
 
 type Me = Awaited<ReturnType<typeof api.me>>;
 type View =
@@ -67,7 +74,20 @@ function parsePath(path: string): View {
   }
   if (parts[0] === "profile") return { name: "profile" };
   if (parts[0] === "marketplace") return { name: "marketplace" };
-  if (parts[0] === "admin") return { name: "admin", tab: parts[1] ?? "vulns" };
+  if (parts[0] === "admin") {
+    const p1 = parts[1] ?? "vulns";
+    if (p1 === "settings") {
+      const p2 = parts[2];
+      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso") {
+        return { name: "admin", tab: `settings-${p2}` };
+      }
+      return { name: "admin", tab: "settings-upload" };
+    }
+    if (p1 === "upload" || p1 === "access" || p1 === "policy" || p1 === "notifications" || p1 === "sso") {
+      return { name: "admin", tab: `settings-${p1}` };
+    }
+    return { name: "admin", tab: p1 };
+  }
   if (parts[0] === "404") return { name: "404" };
   if (parts[0] === "500") return { name: "500" };
   return { name: "404" };
@@ -79,7 +99,12 @@ function toPath(v: View): string {
     case "project": return v.milestoneId ? `/projects/${v.id}/milestones/${v.milestoneId}` : `/projects/${v.id}`;
     case "profile": return "/profile";
     case "marketplace": return "/marketplace";
-    case "admin": return `/admin/${v.tab}`;
+    case "admin": {
+      if (v.tab.startsWith("settings-")) {
+        return `/admin/settings/${v.tab.replace("settings-", "")}`;
+      }
+      return `/admin/${v.tab}`;
+    }
     case "404": return "/404";
     case "500": return "/500";
     default: return "/";
@@ -330,11 +355,11 @@ function Shell() {
             <div className="border-t border-border p-2">
               <SideItem
                 collapsed={collapsed}
-                active={view.name === "admin"}
+                active={view.name === "admin" && (view.tab.startsWith("settings-") || view.tab === "settings")}
                 label="App settings"
                 icon={<IconSettings />}
                 hint={collapsed ? "App settings" : undefined}
-                onClick={() => setView({ name: "admin", tab: "vulns" })}
+                onClick={() => setView({ name: "admin", tab: "settings-upload" })}
               />
             </div>
           )}
@@ -391,6 +416,11 @@ function Shell() {
             </div>
 
             <nav aria-label="Settings navigation" className="flex-1 overflow-y-auto p-2 space-y-1">
+              {!settingsCollapsed && (
+                <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                  Access &amp; Security
+                </p>
+              )}
               <SideItem
                 collapsed={settingsCollapsed}
                 active={view.tab === "vulns"}
@@ -439,12 +469,53 @@ function Shell() {
                 }
                 onClick={() => setView({ name: "admin", tab: "groups" })}
               />
+
+              <div className="my-2 border-t border-border" />
+
+              {!settingsCollapsed && (
+                <p className="px-3 pb-1 pt-1 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                  Platform Config
+                </p>
+              )}
               <SideItem
                 collapsed={settingsCollapsed}
-                active={view.tab === "settings"}
-                label="App settings"
-                icon={<IconSettings />}
-                onClick={() => setView({ name: "admin", tab: "settings" })}
+                active={view.tab === "settings-upload" || view.tab === "upload" || view.tab === "settings"}
+                label="Upload & scanning"
+                hint={settingsCollapsed ? "Upload & scanning" : undefined}
+                icon={<IconUploadCloud />}
+                onClick={() => setView({ name: "admin", tab: "settings-upload" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings-access" || view.tab === "access"}
+                label="Access & tokens"
+                hint={settingsCollapsed ? "Access & tokens" : undefined}
+                icon={<IconKey />}
+                onClick={() => setView({ name: "admin", tab: "settings-access" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings-policy" || view.tab === "policy"}
+                label="Policy & quotas"
+                hint={settingsCollapsed ? "Policy & quotas" : undefined}
+                icon={<IconSliders />}
+                onClick={() => setView({ name: "admin", tab: "settings-policy" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings-notifications" || view.tab === "notifications"}
+                label="Notifications"
+                hint={settingsCollapsed ? "Notifications" : undefined}
+                icon={<IconBell />}
+                onClick={() => setView({ name: "admin", tab: "settings-notifications" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings-sso" || view.tab === "sso"}
+                label="SSO & provisioning"
+                hint={settingsCollapsed ? "SSO & provisioning" : undefined}
+                icon={<IconLock />}
+                onClick={() => setView({ name: "admin", tab: "settings-sso" })}
               />
             </nav>
           </aside>
@@ -519,11 +590,11 @@ function Shell() {
                 <div className="border-t border-border pt-2">
                   <SideItem
                     collapsed={false}
-                    active={view.name === "admin"}
+                    active={view.name === "admin" && (view.tab.startsWith("settings-") || view.tab === "settings")}
                     label="App settings"
                     icon={<IconSettings />}
                     onClick={() => {
-                      setView({ name: "admin", tab: "vulns" });
+                      setView({ name: "admin", tab: "settings-upload" });
                       setMobileNavOpen(false);
                     }}
                   />
@@ -570,7 +641,7 @@ function Shell() {
                       <MenuItem onClick={() => { close(); setView({ name: "profile" }); }}>Profile &amp; skill install</MenuItem>
                       <MenuItem onClick={() => { close(); setView({ name: "profile" }); }}>API tokens</MenuItem>
                       {me.user.is_platform_admin && (
-                        <MenuItem onClick={() => { close(); setView({ name: "admin", tab: "settings" }); }}>App settings</MenuItem>
+                        <MenuItem onClick={() => { close(); setView({ name: "admin", tab: "settings-upload" }); }}>App settings</MenuItem>
                       )}
                       <div className="my-1 border-t border-border" />
                       <MenuItem danger onClick={() => { close(); signOut(); }}>Sign out</MenuItem>
@@ -1880,14 +1951,13 @@ function Admin({ initialTab, go, onCountsUpdate }: {
     go?.({ name: "admin", tab: nextTab });
   };
 
-  const SETTING_SECTIONS: { title: string; hint: string; fields: string[] }[] = [
-    { title: "Upload & scanning", hint: "Zip-bomb limits, antivirus and CVE lookups for every push.", fields: ["max_compressed_mb", "max_uncompressed_mb", "max_entries", "max_file_mb", "max_ratio", "block_push_on_critical", "scan_timeout_s", "clamd_host", "osv_timeout_s", "osv_cache_hours", "unused_dep_check"] },
-    { title: "Access & tokens", hint: "Sessions, API tokens and self-registration.", fields: ["session_hours", "token_default_ttl_days", "max_active_tokens_per_user", "allow_registration"] },
-    { title: "Policy & quotas", hint: "What gets blocked, license rules and per-space limits (0 = unlimited).", fields: ["block_severity", "license_blocklist", "fix_sla_days", "space_quota_mb", "space_member_quota"] },
-    { title: "Notifications", hint: "Webhook for high/critical pushes and outgoing email.", fields: ["webhook_url", "smtp_host", "smtp_port", "smtp_from", "smtp_user", "smtp_password"] },
-    { title: "SSO & provisioning", hint: "OIDC sign-in and SCIM user provisioning. Secrets are encrypted at rest.", fields: ["oidc_issuer", "oidc_client_id", "oidc_client_secret", "scim_token", "public_base_url"] },
-  ];
-  const sectionedFields = new Set(SETTING_SECTIONS.flatMap((sec) => sec.fields));
+  const isSettingsTab = tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso";
+  const activeSettingsSubTab: AdminSettingsTab =
+    tab === "settings-access" || tab === "access" ? "access"
+    : tab === "settings-policy" || tab === "policy" ? "policy"
+    : tab === "settings-notifications" || tab === "notifications" ? "notifications"
+    : tab === "settings-sso" || tab === "sso" ? "sso"
+    : "upload";
 
   return (
     <section aria-labelledby="admin-title">
@@ -1896,28 +1966,40 @@ function Admin({ initialTab, go, onCountsUpdate }: {
           {tab === "vulns" && "Vulnerabilities"}
           {tab === "people" && "People & access"}
           {tab === "groups" && "Groups & teams"}
-          {tab === "settings" && "App settings"}
+          {isSettingsTab && activeSettingsSubTab === "upload" && "Upload & Security Scanning"}
+          {isSettingsTab && activeSettingsSubTab === "access" && "Access Control & API Tokens"}
+          {isSettingsTab && activeSettingsSubTab === "policy" && "Governance Policies & Space Quotas"}
+          {isSettingsTab && activeSettingsSubTab === "notifications" && "Notifications & Alerting"}
+          {isSettingsTab && activeSettingsSubTab === "sso" && "Single Sign-On (SSO) & SCIM"}
         </h2>
         <p className="mt-1 text-sm text-text-muted">
           {tab === "vulns" && `${vulns?.total_open ?? 0} open (${vulns?.critical ?? 0} fix-now) across every project. Contact leaves a to-do on their latest milestone.`}
           {tab === "people" && `${users.length} people. Block stops all sign-ins and pushes instantly.`}
           {tab === "groups" && `${groups.length} groups. Give a group a role in a space and every member inherits it.`}
-          {tab === "settings" && "Platform configurations: upload limits, policies, quotas, notifications and SSO."}
+          {isSettingsTab && activeSettingsSubTab === "upload" && "Decompression safeguards, zip-bomb defense ratios, ClamAV antivirus daemon, and OSV vulnerability lookups."}
+          {isSettingsTab && activeSettingsSubTab === "access" && "Web browser session duration, personal API access token quotas, and open user self-registration."}
+          {isSettingsTab && activeSettingsSubTab === "policy" && "Push security gates, software license blocklists (SPDX), vulnerability remediation SLAs, and space resource quotas."}
+          {isSettingsTab && activeSettingsSubTab === "notifications" && "Automated high/critical incident webhooks and outgoing SMTP mail transfer credentials."}
+          {isSettingsTab && activeSettingsSubTab === "sso" && "Enterprise identity provider federation with OpenID Connect (OIDC) and automated SCIM v2 directory synchronization."}
         </p>
         {error && <div className="mt-3"><Alert variant="error">{error}</Alert></div>}
       </div>
 
       {/* Mobile Tab switcher — visible only on screens where desktop sidebar is hidden */}
-      <div className="lg:hidden mt-4">
+      <div className="lg:hidden mt-4 overflow-x-auto pb-1">
         <Tabs
           ariaLabel="Settings sections"
-          value={tab}
+          value={isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
           onChange={selectTab}
           items={[
             { key: "vulns", label: `Vulns${vulns ? ` (${vulns.total_open})` : ""}` },
             { key: "people", label: `People (${users.length})` },
             { key: "groups", label: `Groups (${groups.length})` },
-            { key: "settings", label: "Settings" },
+            { key: "settings-upload", label: "Upload" },
+            { key: "settings-access", label: "Access" },
+            { key: "settings-policy", label: "Policy" },
+            { key: "settings-notifications", label: "Alerts" },
+            { key: "settings-sso", label: "SSO" },
           ]}
         />
       </div>
@@ -2028,59 +2110,12 @@ function Admin({ initialTab, go, onCountsUpdate }: {
           </div>
         )}
 
-        {tab === "settings" && (
-          <form onSubmit={async (e) => {
-            e.preventDefault();
-            if (!settings) return;
-            await api.putSettings(settings);
-            toast.success("Settings saved.");
-          }}>
-            <div className="space-y-4">
-              {SETTING_SECTIONS.map((sec) => {
-                const fields = sec.fields.filter((f) => settings && f in settings);
-                if (!settings || fields.length === 0) return null;
-                return (
-                  <Card key={sec.title} className="p-5">
-                    <h3 className="font-serif text-lg font-bold">{sec.title}</h3>
-                    <p className="mt-0.5 text-sm text-text-muted">{sec.hint}</p>
-                    <div className="mt-4 grid gap-2">
-                      {fields.map((k) => {
-                        const v = settings[k];
-                        return (
-                          <label key={k} className="flex min-h-11 items-center gap-3 rounded-md border border-border bg-background px-3 py-1.5 text-sm">
-                            <span className="w-52 shrink-0 font-medium">{k}</span>
-                            {typeof v === "boolean"
-                              ? <input type="checkbox" className="h-4 w-4 accent-primary" checked={v} onChange={(e) => setSettings({ ...settings, [k]: e.target.checked })} />
-                              : <Input type={k.includes("password") || k.includes("secret") || k.includes("token") ? "password" : "text"} value={String(v)} aria-label={k} onChange={(e) => setSettings({ ...settings, [k]: typeof v === "number" ? Number(e.target.value) : e.target.value })} />}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </Card>
-                );
-              })}
-              {settings && Object.keys(settings).filter((k) => !sectionedFields.has(k)).length > 0 && (
-                <Card className="p-5">
-                  <h3 className="font-serif text-lg font-bold">Other</h3>
-                  <div className="mt-4 grid gap-2">
-                    {Object.entries(settings).filter(([k]) => !sectionedFields.has(k)).map(([k, v]) => (
-                      <label key={k} className="flex min-h-11 items-center gap-3 rounded-md border border-border bg-background px-3 py-1.5 text-sm">
-                        <span className="w-52 shrink-0 font-medium">{k}</span>
-                        {typeof v === "boolean"
-                          ? <input type="checkbox" className="h-4 w-4 accent-primary" checked={v} onChange={(e) => setSettings({ ...settings, [k]: e.target.checked })} />
-                          : <Input value={String(v)} aria-label={k} onChange={(e) => setSettings({ ...settings, [k]: typeof v === "number" ? Number(e.target.value) : e.target.value })} />}
-                      </label>
-                    ))}
-                  </div>
-                </Card>
-              )}
-              {!settings && <div className="space-y-2"><Skeleton className="h-11" /><Skeleton className="h-11" /><Skeleton className="h-11" /></div>}
-            </div>
-            <div className="sticky bottom-4 mt-4 flex justify-end">
-              <Button type="submit" className="shadow-raised">Save all settings</Button>
-            </div>
-            <p className="mt-2 text-right text-xs text-text-muted">Saves to the database and takes effect on the next request — no restart.</p>
-          </form>
+        {isSettingsTab && (
+          <AdminSettings
+            tab={activeSettingsSubTab}
+            settings={settings}
+            onUpdate={load}
+          />
         )}
         </div>
     </section>
