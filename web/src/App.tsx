@@ -1886,6 +1886,8 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
         )}
       </div>
 
+      <RestoreCard milestoneId={milestoneId} seqNo={data.milestone.seq_no} label={data.milestone.label} />
+
       {canPush && myProjects.some((p) => p.id !== projectId) && <Card className="mt-6 p-5">
         <p className="font-semibold">Fork this milestone</p>
         <p className="mt-0.5 text-sm text-text-muted">Copies this exact version into another project so you can try a different direction without losing this one.</p>
@@ -1925,6 +1927,27 @@ function ShotThumb({ blobKey }: { blobKey: string }) {
         : <Skeleton className="aspect-video w-full rounded-none" />}
       <span className="block truncate px-2 py-1.5 text-xs text-text-muted">{name}</span>
     </a>
+  );
+}
+
+function RestoreCard({ milestoneId, seqNo, label }: { milestoneId: string; seqNo: number; label: string }) {
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const prompt = `Use VibeForge to restore my local folder to milestone #${seqNo} ("${label}"), milestone id ${milestoneId}. Push my current state as a milestone first.`;
+  return (
+    <Card className="mt-6 p-5">
+      <p className="font-semibold">Restore this milestone locally</p>
+      <p className="mt-0.5 text-sm text-text-muted">Revert your local project to milestone #{seqNo}. Download the zip and unpack it over your folder, or ask your AI tool to do it through MCP or the skill. Later milestones stay saved here.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button busy={busy} onClick={async () => {
+          setBusy(true);
+          try { const name = `milestone-${seqNo}.zip`; await api.downloadMilestone(milestoneId, name); toast.success(`${name} downloaded — unzip it into your project folder.`); }
+          catch (err) { toast.error(err instanceof Error ? err.message : "Download failed."); }
+          finally { setBusy(false); }
+        }}>Download milestone #{seqNo}</Button>
+        <CopyButton text={prompt} label="Copy prompt for your AI tool" />
+      </div>
+    </Card>
   );
 }
 
@@ -1989,6 +2012,26 @@ function SbomPanel({ milestoneId, sbom }: { milestoneId: string; sbom: MileData[
 
 // ----------------------------------------------------------------- profile
 
+function McpCard() {
+  const url = `${location.origin.replace(":5173", ":8080")}/mcp`;
+  const claudeCmd = `claude mcp add --transport http vibeforge ${url} --header "Authorization: Bearer <your vatt_ token>"`;
+  const json = JSON.stringify({ mcpServers: { vibeforge: { type: "http", url, headers: { Authorization: "Bearer <your vatt_ token>" } } } }, null, 2);
+  return (
+    <Card className="p-5">
+      <h3 className="font-serif text-lg font-bold">Connect with MCP</h3>
+      <p className="mt-1 text-sm text-text-muted">Add VibeForge as an MCP server and your AI tool gets five tools: list projects, list milestones, push a milestone, read findings and restore a milestone. Sign in with an API token from below.</p>
+      <p className="mt-3 text-sm font-medium">Claude Code</p>
+      <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-md bg-background p-3 text-xs">{claudeCmd}</pre>
+      <p className="mt-3 text-sm font-medium">Cursor, Windsurf, VS Code and other MCP clients (mcp.json)</p>
+      <pre className="mt-1 overflow-x-auto rounded-md bg-background p-3 text-xs">{json}</pre>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <CopyButton text={claudeCmd} label="Copy Claude Code command" />
+        <CopyButton text={json} label="Copy mcp.json" />
+      </div>
+    </Card>
+  );
+}
+
 function Profile() {
   const [tokens, setTokens] = useState<Awaited<ReturnType<typeof api.tokens>> | null>(null);
   const [fresh, setFresh] = useState("");
@@ -2031,6 +2074,7 @@ function Profile() {
         </div>
       </Card>
 
+      <McpCard />
       <MfaCard />
       <AccountDataCard />
 

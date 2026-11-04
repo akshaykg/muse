@@ -35,6 +35,21 @@ In production the server also serves `web/dist` (`npm run build`) and
 4. Open **Findings** (what to fix, in plain words) and **Fix it** (copy-paste fixes).
 5. **Profile** → create an API token, download `SKILL.md`, connect your AI tool.
 
+## Connect an AI tool with MCP
+
+VibeForge is also an MCP server at `POST /mcp` (Streamable HTTP, JSON
+responses). Create an API token under **Profile**, then:
+
+```bash
+claude mcp add --transport http vibeforge http://localhost:8080/mcp \
+  --header "Authorization: Bearer vatt_…"
+```
+
+Other clients use the same URL and header in their `mcp.json`. Tools:
+`list_projects`, `list_milestones`, `push_milestone`, `get_findings`,
+`restore_milestone`. To revert a local folder, open a milestone and use
+**Restore this milestone locally** (or `GET /api/v1/milestones/{id}/download`).
+
 Every admin-editable value (zip limits, token TTLs, session length, SMTP,
 public URL) lives under **Admin → Settings** and takes effect immediately.
 

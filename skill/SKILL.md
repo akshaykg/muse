@@ -11,6 +11,9 @@ run git commands for VibeForge, and never overwrite an old milestone.
 
 ## 1. Connect (once)
 
+If VibeForge is already connected as an MCP server (tools `list_projects`,
+`push_milestone`, `restore_milestone` …), use those tools instead of curl.
+
 You need two things. If you do not have them, ask the user once:
 
 - **Server**: e.g. `http://localhost:8080` (stored as `VIBEFORGE_URL`)
@@ -80,7 +83,31 @@ curl -s -X POST "$VIBEFORGE_URL/api/v1/milestones/<milestone_id>/screenshots" \
   -H "Content-Type: image/png" --data-binary @screenshot.png
 ```
 
-## 4. Report back in plain words
+### Push several milestones in a row
+
+Push after every meaningful step, each with its own label ("login works",
+"added dark mode", "checkout fixed"). Every push gets the next number
+(#1, #2, #3 …) and the older ones stay untouched.
+
+## 4. Revert the local folder to an earlier milestone
+
+List the milestones and let the user pick one by number or label:
+
+```bash
+curl -s "$VIBEFORGE_URL/api/v1/projects/$PROJECT_ID/milestones" -H "Authorization: Bearer $VIBEFORGE_TOKEN"
+```
+
+Before replacing anything, confirm with the user and offer to push the
+current state first so nothing is lost. Then download and unpack it:
+
+```bash
+curl -fsSL -H "Authorization: Bearer $VIBEFORGE_TOKEN" -o /tmp/vibeforge-restore.zip \
+  "$VIBEFORGE_URL/api/v1/milestones/<milestone_id>/download"
+# remove the project's tracked files (keep .git, node_modules, .env), then:
+unzip -o /tmp/vibeforge-restore.zip -d .
+```
+
+## 5. Report back in plain words
 
 Read the findings returned for the milestone
 (`GET /api/v1/milestones/<id>/findings`). Tell the user what needs fixing in
