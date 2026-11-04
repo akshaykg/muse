@@ -133,7 +133,7 @@ fn catalog() -> Vec<serde_json::Value> {
 }
 
 /// Effective API key and where it came from. Never leaves the server.
-fn resolve_key(state: &Shared, cfg: &AiConfig) -> (String, &'static str) {
+pub(crate) fn resolve_key(state: &Shared, cfg: &AiConfig) -> (String, &'static str) {
     let stored = open_secret(state, &cfg.api_key);
     if !stored.trim().is_empty() { return (stored.trim().to_string(), "settings"); }
     for var in ["MODEL_API_KEY", "META_API_KEY"] {
@@ -342,7 +342,7 @@ fn response_schema() -> serde_json::Value {
 
 /// One chat-completions call. Tries structured output first and falls back to
 /// a plain request for providers/models that reject `response_format`.
-async fn chat(cfg: &AiConfig, key: &str, system: &str, user: &str, schema: Option<(&str, serde_json::Value)>, timeout_s: u64) -> Result<String, String> {
+pub(crate) async fn chat(cfg: &AiConfig, key: &str, system: &str, user: &str, schema: Option<(&str, serde_json::Value)>, timeout_s: u64) -> Result<String, String> {
     let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_s))
@@ -390,7 +390,7 @@ async fn chat(cfg: &AiConfig, key: &str, system: &str, user: &str, schema: Optio
 }
 
 /// Pull the JSON object out of a reply that may be fenced or chatty.
-fn extract_json(text: &str) -> Option<serde_json::Value> {
+pub(crate) fn extract_json(text: &str) -> Option<serde_json::Value> {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(text.trim()) { return Some(v); }
     let start = text.find('{')?;
     let end = text.rfind('}')?;

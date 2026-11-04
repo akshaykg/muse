@@ -53,6 +53,8 @@ import { AdminSettings, type AdminSettingsTab } from "./components/AdminSettings
 import { AiReviewPanel, IconSparkles } from "./components/AiReview";
 import { AiSettings } from "./components/AiSettings";
 import { MilestoneShowcase } from "./components/Showcase";
+import { GitPanel, GitIdentityCard, IconGit, UseGitBanner } from "./components/GitPanel";
+import { GitSettings } from "./components/GitSettings";
 
 type Me = Awaited<ReturnType<typeof api.me>>;
 type View =
@@ -84,7 +86,7 @@ function parsePath(path: string): View {
     const p1 = parts[1] ?? "vulns";
     if (p1 === "settings") {
       const p2 = parts[2];
-      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso" || p2 === "ai") {
+      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso" || p2 === "ai" || p2 === "git") {
         return { name: "admin", tab: `settings-${p2}` };
       }
       return { name: "admin", tab: "settings-upload" };
@@ -530,6 +532,14 @@ function Shell() {
                 hint={settingsCollapsed ? "AI review" : undefined}
                 icon={<IconSparkles />}
                 onClick={() => setView({ name: "admin", tab: "settings-ai" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings-git"}
+                label="Git"
+                hint={settingsCollapsed ? "Git" : undefined}
+                icon={<IconGit />}
+                onClick={() => setView({ name: "admin", tab: "settings-git" })}
               />
             </nav>
           </aside>
@@ -1628,6 +1638,10 @@ function ProjectBody({ data, role, selected, setSelected, showPush, setShowPush,
         </p>
       </Card>
 
+      {role && latest && (
+        <UseGitBanner projectId={projectId} onOpen={() => { if (!selected) setSelected(latest.id); window.setTimeout(() => window.dispatchEvent(new Event("vf:open-git")), selected ? 0 : 400); }} />
+      )}
+
       {canPush && showPush && (
         <UploadBox
           projectId={projectId}
@@ -1842,6 +1856,13 @@ function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, on
     catch (e) { setData(null); setLoadError(e instanceof Error ? e.message : "Could not load this milestone."); }
   }, [milestoneId]);
   useEffect(() => { void load(); setOpenFile(null); setTab("findings"); }, [load]);
+  // "Set up Git" on the project page opens this tab.
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const open = () => { setTab("git"); window.setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
+    window.addEventListener("vf:open-git", open);
+    return () => window.removeEventListener("vf:open-git", open);
+  }, []);
   useEffect(() => { void api.myProjects().then(setMyProjects).catch(() => {}); }, []);
 
   if (!data && loadError) return <Alert>{loadError}</Alert>;
@@ -1858,6 +1879,7 @@ function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, on
         canPush={canPush}
         onShotsChanged={async () => { await load(); onChanged(); }}
       />
+      <div ref={tabsRef} className="scroll-mt-20" />
       <Tabs
         ariaLabel="Milestone"
         value={tab}
@@ -1866,6 +1888,7 @@ function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, on
           { key: "findings", label: `Findings (${open.length})` },
           { key: "fix", label: "Fix it" },
           { key: "ai", label: "✦ AI review" },
+          { key: "git", label: "Git" },
           { key: "files", label: `Files (${data.files.length})` },
           { key: "todos", label: `To-dos & gaps (${data.todos.length})` },
           { key: "sbom", label: `SBOM (${data.sbom?.total ?? 0})` },
@@ -2002,6 +2025,16 @@ function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, on
             canPush={canPush}
             isAdmin={isPlatformAdmin}
             onOpenSettings={() => { window.history.pushState({}, "", "/admin/settings/ai"); window.dispatchEvent(new PopStateEvent("popstate")); }}
+          />
+        )}
+        {tab === "git" && (
+          <GitPanel
+            milestoneId={milestoneId}
+            projectId={projectId}
+            canPush={canPush}
+            isAdmin={isPlatformAdmin}
+            onOpenSettings={() => { window.history.pushState({}, "", "/admin/settings/git"); window.dispatchEvent(new PopStateEvent("popstate")); }}
+            onOpenProfile={() => { window.history.pushState({}, "", "/profile"); window.dispatchEvent(new PopStateEvent("popstate")); }}
           />
         )}
 
@@ -2176,6 +2209,7 @@ function Profile() {
       </Card>
 
       <McpCard />
+      <GitIdentityCard />
       <MfaCard />
       <AccountDataCard />
 
@@ -2402,7 +2436,8 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
   };
 
   const isAiTab = tab === "settings-ai" || tab === "ai";
-  const isSettingsTab = !isAiTab && (tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso");
+  const isGitTab = tab === "settings-git";
+  const isSettingsTab = !isAiTab && !isGitTab && (tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso");
   const activeSettingsSubTab: AdminSettingsTab =
     tab === "settings-access" || tab === "access" ? "access"
     : tab === "settings-policy" || tab === "policy" ? "policy"
@@ -2423,6 +2458,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {isSettingsTab && activeSettingsSubTab === "notifications" && "Notifications & Alerting"}
           {isSettingsTab && activeSettingsSubTab === "sso" && "Single Sign-On (SSO) & SCIM"}
           {isAiTab && "AI review"}
+          {isGitTab && "Git"}
         </h2>
         <p className="mt-1 text-sm text-text-muted">
           {tab === "vulns" && `${vulns?.total_open ?? 0} open (${vulns?.critical ?? 0} fix-now) across every project. Contact leaves a to-do on their latest milestone.`}
@@ -2434,6 +2470,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {isSettingsTab && activeSettingsSubTab === "notifications" && "Automated high/critical incident webhooks and outgoing SMTP mail transfer credentials."}
           {isSettingsTab && activeSettingsSubTab === "sso" && "Enterprise identity provider federation with OpenID Connect (OIDC) and automated SCIM v2 directory synchronization."}
           {isAiTab && "Meta Muse reads milestones and explains, in plain words, the secrets, security gaps and bad habits scanners miss. Choose the model and manage the API key."}
+          {isGitTab && "Ask people to use Git, set your team's Git host and branch, and choose the .gitignore lines and hooks every project gets. Meta Muse tailors them per project."}
         </p>
         {error && <div className="mt-3"><Alert variant="error">{error}</Alert></div>}
       </div>
@@ -2442,7 +2479,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
       <div className="lg:hidden mt-4 overflow-x-auto pb-1">
         <Tabs
           ariaLabel="Settings sections"
-          value={isAiTab ? "settings-ai" : isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
+          value={isAiTab ? "settings-ai" : isGitTab ? "settings-git" : isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
           onChange={selectTab}
           items={[
             { key: "vulns", label: `Vulns${vulns ? ` (${vulns.total_open})` : ""}` },
@@ -2454,6 +2491,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
             { key: "settings-notifications", label: "Alerts" },
             { key: "settings-sso", label: "SSO" },
             { key: "settings-ai", label: "AI" },
+            { key: "settings-git", label: "Git" },
           ]}
         />
       </div>
@@ -2565,6 +2603,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
         )}
 
         {isAiTab && <AiSettings />}
+        {isGitTab && <GitSettings />}
         {isSettingsTab && (
           <AdminSettings
             tab={activeSettingsSubTab}
