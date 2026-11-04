@@ -50,6 +50,9 @@ import {
 } from "./components/icons";
 import { NotFoundScreen, ServerErrorScreen, ErrorBoundary } from "./components/ErrorScreens";
 import { AdminSettings, type AdminSettingsTab } from "./components/AdminSettings";
+import { AiReviewPanel, IconSparkles } from "./components/AiReview";
+import { AiSettings } from "./components/AiSettings";
+import { MilestoneShowcase } from "./components/Showcase";
 
 type Me = Awaited<ReturnType<typeof api.me>>;
 type View =
@@ -81,7 +84,7 @@ function parsePath(path: string): View {
     const p1 = parts[1] ?? "vulns";
     if (p1 === "settings") {
       const p2 = parts[2];
-      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso") {
+      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso" || p2 === "ai") {
         return { name: "admin", tab: `settings-${p2}` };
       }
       return { name: "admin", tab: "settings-upload" };
@@ -185,6 +188,7 @@ function Shell() {
   const [settingsCollapsed, setSettingsCollapsed] = useState(() => localStorage.getItem("vf_settings_collapsed") === "1");
   const [adminCounts, setAdminCounts] = useState<{ vulns?: number; users?: number; groups?: number }>({});
   const [theme, toggleTheme] = useTheme();
+  const [navProjects, setNavProjects] = useState<NavProject[]>([]);
 
   const toggleSettingsCollapsed = useCallback(() => {
     setSettingsCollapsed((v) => {
@@ -192,6 +196,12 @@ function Shell() {
       return !v;
     });
   }, []);
+
+  // Projects for the left nav; refreshed on navigation so new projects show up.
+  useEffect(() => {
+    if (!me) return;
+    void api.myProjects().then(setNavProjects).catch(() => {});
+  }, [me, view.name, (view as { id?: string }).id]);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -358,52 +368,7 @@ function Shell() {
             )}
           </div>
 
-          <nav aria-label="Spaces" className="flex-1 overflow-y-auto p-2">
-            <SideItem collapsed={collapsed} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => setView({ name: "spaces" })} />
-            {!collapsed && <p className="px-3 pb-1.5 pt-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted/80">Your spaces</p>}
-            <div className="space-y-0.5">
-              {me.spaces.map((sp) => (
-                <SideItem
-                  key={sp.id}
-                  collapsed={collapsed}
-                  active={view.name === "space" && view.id === sp.id}
-                  label={sp.name}
-                  icon={<span className="text-xs font-bold">{sp.name.slice(0, 1).toUpperCase()}</span>}
-                  hint={collapsed ? sp.name : `${sp.role}`}
-                  onClick={() => setView({ name: "space", id: sp.id, label: sp.name })}
-                />
-              ))}
-            </div>
-            {perms.isAdmin && (
-              <SideItem
-                collapsed={collapsed}
-                active={false}
-                label="New space"
-                icon={<IconPlus />}
-                onClick={() => {
-                  setView({ name: "spaces" });
-                  window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
-                }}
-              />
-            )}
-
-            <div className="my-2 border-t border-border" />
-            <SideItem collapsed={collapsed} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => setView({ name: "marketplace" })} />
-          </nav>
-
-          {/* App settings moved to bottom of left nav — single button */}
-          {perms.isAdmin && (
-            <div className="border-t border-border p-2">
-              <SideItem
-                collapsed={collapsed}
-                active={view.name === "admin" && (view.tab.startsWith("settings-") || view.tab === "settings")}
-                label="App settings"
-                icon={<IconSettings />}
-                hint={collapsed ? "App settings" : undefined}
-                onClick={() => setView({ name: "admin", tab: "settings-upload" })}
-              />
-            </div>
-          )}
+          <NavBody collapsed={collapsed} view={view} me={me} projects={navProjects} isAdmin={perms.isAdmin} go={setView} />
 
           {!collapsed && (
             <div
@@ -558,6 +523,14 @@ function Shell() {
                 icon={<IconLock />}
                 onClick={() => setView({ name: "admin", tab: "settings-sso" })}
               />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings-ai" || view.tab === "ai"}
+                label="AI review"
+                hint={settingsCollapsed ? "AI review" : undefined}
+                icon={<IconSparkles />}
+                onClick={() => setView({ name: "admin", tab: "settings-ai" })}
+              />
             </nav>
           </aside>
         )}
@@ -593,54 +566,7 @@ function Shell() {
                 </button>
               </div>
 
-              <nav aria-label="Mobile spaces" className="flex-1 overflow-y-auto py-3 space-y-1">
-                <SideItem collapsed={false} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => { setView({ name: "spaces" }); setMobileNavOpen(false); }} />
-                <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>
-                <div className="space-y-0.5">
-                  {me.spaces.map((sp) => (
-                    <SideItem
-                      key={sp.id}
-                      collapsed={false}
-                      active={view.name === "space" && view.id === sp.id}
-                      label={sp.name}
-                      icon={<span className="text-xs font-bold">{sp.name.slice(0, 1).toUpperCase()}</span>}
-                      hint={sp.role}
-                      onClick={() => { setView({ name: "space", id: sp.id, label: sp.name }); setMobileNavOpen(false); }}
-                    />
-                  ))}
-                </div>
-                {perms.isAdmin && (
-                  <SideItem
-                    collapsed={false}
-                    active={false}
-                    label="New space"
-                    icon={<IconPlus />}
-                    onClick={() => {
-                      setView({ name: "spaces" });
-                      setMobileNavOpen(false);
-                      window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
-                    }}
-                  />
-                )}
-                <div className="my-2 border-t border-border" />
-                <SideItem collapsed={false} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => { setView({ name: "marketplace" }); setMobileNavOpen(false); }} />
-              </nav>
-
-              {/* Mobile App settings at bottom of left nav */}
-              {perms.isAdmin && (
-                <div className="border-t border-border pt-2">
-                  <SideItem
-                    collapsed={false}
-                    active={view.name === "admin" && (view.tab.startsWith("settings-") || view.tab === "settings")}
-                    label="App settings"
-                    icon={<IconSettings />}
-                    onClick={() => {
-                      setView({ name: "admin", tab: "settings-upload" });
-                      setMobileNavOpen(false);
-                    }}
-                  />
-                </div>
-              )}
+              <NavBody collapsed={false} view={view} me={me} projects={navProjects} isAdmin={perms.isAdmin} go={(v) => { setView(v); setMobileNavOpen(false); }} />
             </div>
           </div>
         )}
@@ -733,6 +659,180 @@ function Shell() {
         </div>
       </div>
     </PermissionsProvider>
+  );
+}
+
+type NavProject = Awaited<ReturnType<typeof api.myProjects>>[number];
+
+/** Stable colour per space, from theme tokens only. */
+const SPACE_TONES = [
+  "bg-primary/15 text-primary",
+  "bg-info/15 text-info",
+  "bg-warning/15 text-warning",
+  "bg-success/15 text-success",
+  "bg-error/12 text-error",
+];
+function spaceTone(id: string): string {
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return SPACE_TONES[h % SPACE_TONES.length];
+}
+
+function SpaceGlyph({ id, size = 28 }: { id: string; size?: number }) {
+  return (
+    <span aria-hidden className={`flex shrink-0 items-center justify-center rounded-md ${spaceTone(id)}`} style={{ width: size, height: size }}>
+      <svg width={size * 0.55} height={size * 0.55} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2 2 7l10 5 10-5-10-5z" /><path d="m2 17 10 5 10-5" /><path d="m2 12 10 5 10-5" />
+      </svg>
+    </span>
+  );
+}
+
+/** Project's own favicon in the nav; the default package icon when it has none. */
+function NavProjectIcon({ projectId, name }: { projectId: string; name: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    let made: string | null = null;
+    void api.faviconUrl(projectId).then((u) => { made = u; if (live) setUrl(u); }).catch(() => {});
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [projectId]);
+  if (!url) return <DefaultProjectIcon name={name} size={20} className="!rounded-[5px] !shadow-none" />;
+  return <img src={url} alt="" className="h-5 w-5 shrink-0 rounded-[5px] object-contain" />;
+}
+
+function NavSection({ label, action, collapsed }: { label: string; action?: ReactNode; collapsed: boolean }) {
+  if (collapsed) return <div className="mx-3 my-3 border-t border-border" />;
+  return (
+    <div className="flex items-center justify-between px-2.5 pb-1 pt-5">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted/80">{label}</span>
+      {action}
+    </div>
+  );
+}
+
+function NavBody({ collapsed, view, me, projects, isAdmin, go }: {
+  collapsed: boolean;
+  view: View;
+  me: Me;
+  projects: NavProject[];
+  isAdmin: boolean;
+  go: (v: View) => void;
+}) {
+  const activeProject = view.name === "project" ? projects.find((p) => p.id === view.id) : undefined;
+  const activeSpaceId = view.name === "space" ? view.id : activeProject?.space_id;
+  const [open, setOpen] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("vf_nav_open") ?? "{}"); } catch { return {}; }
+  });
+  const toggle = (id: string) => setOpen((o) => {
+    const next = { ...o, [id]: !(o[id] ?? id === activeSpaceId) };
+    try { localStorage.setItem("vf_nav_open", JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
+  const inSettings = view.name === "admin";
+
+  return (
+    <>
+      <nav aria-label="Main" className="flex-1 overflow-y-auto px-2 pb-3 pt-2">
+        <div className="space-y-0.5">
+          <SideItem collapsed={collapsed} active={view.name === "spaces"} label="Home" icon={<IconSpaces />} onClick={() => go({ name: "spaces" })} />
+          <SideItem collapsed={collapsed} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => go({ name: "marketplace" })} />
+        </div>
+
+        <NavSection
+          collapsed={collapsed}
+          label="Spaces"
+          action={isAdmin ? (
+            <button
+              type="button"
+              aria-label="New space"
+              title="New space"
+              onClick={() => { go({ name: "spaces" }); window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50); }}
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text-muted transition hover:bg-text/[0.06] hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <IconPlus width={14} height={14} />
+            </button>
+          ) : undefined}
+        />
+
+        {me.spaces.length === 0 && !collapsed && (
+          <p className="px-2.5 py-2 text-xs text-text-muted">No spaces yet. {isAdmin ? "Create one with +." : "Ask an admin to add you."}</p>
+        )}
+
+        <ul className="space-y-0.5">
+          {me.spaces.map((sp) => {
+            const items = projects.filter((p) => p.space_id === sp.id);
+            const expanded = open[sp.id] ?? sp.id === activeSpaceId;
+            const active = view.name === "space" && view.id === sp.id;
+            if (collapsed) {
+              return (
+                <li key={sp.id}>
+                  <button type="button" title={sp.name} aria-label={sp.name} aria-current={active || undefined}
+                    onClick={() => go({ name: "space", id: sp.id, label: sp.name })}
+                    className={`flex w-full cursor-pointer justify-center rounded-md py-1.5 transition ${active || sp.id === activeSpaceId ? "bg-primary/10" : "hover:bg-text/[0.05]"}`}>
+                    <SpaceGlyph id={sp.id} />
+                  </button>
+                </li>
+              );
+            }
+            return (
+              <li key={sp.id}>
+                <div className={`group flex items-center rounded-md transition-colors duration-fast ${active ? "bg-primary/10" : "hover:bg-text/[0.05]"}`}>
+                  <button
+                    type="button"
+                    aria-label={expanded ? `Collapse ${sp.name}` : `Expand ${sp.name}`}
+                    aria-expanded={expanded}
+                    onClick={() => toggle(sp.id)}
+                    className="flex h-9 w-6 shrink-0 cursor-pointer items-center justify-center text-text-muted/70 hover:text-text"
+                  >
+                    <IconChevronRight width={13} height={13} className={`transition-transform duration-fast ${expanded ? "rotate-90" : ""}`} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-current={active || undefined}
+                    onClick={() => go({ name: "space", id: sp.id, label: sp.name })}
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 py-1.5 pr-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-md"
+                  >
+                    <SpaceGlyph id={sp.id} size={24} />
+                    <span className={`min-w-0 flex-1 truncate ${active ? "font-semibold text-text" : "font-medium text-text"}`}>{sp.name}</span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-text-muted">{items.length}</span>
+                  </button>
+                </div>
+                {expanded && (
+                  <ul className="relative mb-1 ml-[22px] mt-0.5 space-y-px border-l border-border pl-2">
+                    {items.length === 0 && <li className="px-2 py-1.5 text-xs text-text-muted">No projects yet</li>}
+                    {items.map((p) => {
+                      const on = activeProject?.id === p.id;
+                      return (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            aria-current={on || undefined}
+                            onClick={() => go({ name: "project", id: p.id })}
+                            className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${on ? "bg-primary/10 font-semibold text-text" : "text-text-muted hover:bg-text/[0.05] hover:text-text"}`}
+                          >
+                            <NavProjectIcon projectId={p.id} name={p.name} />
+                            <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                            {p.milestones > 0 && <span className="shrink-0 text-[11px] tabular-nums text-text-muted/80" title={`${p.milestones} milestones`}>#{p.milestones}</span>}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
+      <div className="space-y-0.5 border-t border-border p-2">
+        <SideItem collapsed={collapsed} active={view.name === "profile"} label="Connect your AI tool" icon={<IconKey />} onClick={() => go({ name: "profile" })} />
+        {isAdmin && (
+          <SideItem collapsed={collapsed} active={inSettings} label="Settings" icon={<IconSettings />} onClick={() => go({ name: "admin", tab: "settings-upload" })} />
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1536,71 +1636,97 @@ function ProjectBody({ data, role, selected, setSelected, showPush, setShowPush,
         />
       )}
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[280px_1fr]">
-        <div>
-          <div className="flex items-baseline gap-2">
-            <h3 className="font-serif text-lg font-bold">History</h3>
-            <span className="text-xs text-text-muted">{data.milestones.length} milestone{data.milestones.length === 1 ? "" : "s"}</span>
-          </div>
-          {data.milestones.length > 0 ? (
-            <ol className="relative mt-4">
-              <span aria-hidden className="absolute bottom-3 left-[13px] top-3 w-px bg-border" />
-              {[...data.milestones].reverse().map((m, idx) => {
-                const active = selected === m.id;
-                const latest = idx === 0;
-                return (
-                  <li key={m.id} className="relative pb-3 pl-9 last:pb-0">
-                    <span
-                      aria-hidden
-                      className={`absolute left-[7px] top-[18px] h-[13px] w-[13px] rounded-full border-[2.5px] transition duration-fast ${
-                        active ? "border-primary bg-primary" : m.findings > 0 ? "border-error/70 bg-surface" : "border-success/70 bg-surface"
-                      }`}
-                    />
-                    <button
-                      type="button"
-                      aria-current={active || undefined}
-                      onClick={() => setSelected(m.id)}
-                      className={`w-full rounded-lg border p-3.5 text-left transition duration-normal ease-standard focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.99] ${
-                        active
-                          ? "border-primary bg-primary/5 shadow-raised"
-                          : "border-border bg-surface shadow-surface hover:-translate-y-px hover:border-primary/50 hover:shadow-raised"
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-bold ${active ? "bg-primary text-primary-fg" : "bg-background text-text-muted"}`}>
-                          #{m.seq_no}
-                        </span>
-                        {latest && <Badge tone="primary">Latest</Badge>}
-                        <span className="ml-auto text-[11px] text-text-muted">
-                          {new Date(m.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
-                          {" · "}
-                          {new Date(m.created_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                      </span>
-                      <span className="mt-2 line-clamp-2 block text-sm font-medium leading-snug">{m.label}</span>
-                      <span className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                        {m.findings > 0 ? <Badge tone="danger">{m.findings} to fix</Badge> : <Badge tone="success">✓ Clean scan</Badge>}
-                        {m.languages?.length > 0 && <Badge>{m.languages.join(" · ")}</Badge>}
-                        <span aria-hidden className={`ml-auto text-xs font-medium text-primary transition duration-fast ${active ? "opacity-100" : "opacity-0"}`}>
-                          Viewing →
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-          ) : (
-            <div className="mt-3"><EmptyState title="No milestones yet" hint="Push one with the skill or the button above." /></div>
-          )}
-        </div>
-        <div>
+      <div className="mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 lg:order-1 order-2">
           {selected
-            ? <MilestoneDetail milestoneId={selected} projectId={projectId} canPush={canPush} onChanged={load} />
+            ? <MilestoneDetail milestoneId={selected} projectId={projectId} projectName={data.project.name} canPush={canPush} onChanged={load} />
             : <EmptyState title="Pick a milestone" hint="Its files, findings and screenshots appear here." />}
         </div>
+        <aside aria-labelledby="history-title" className="order-1 lg:order-2 lg:sticky lg:top-20">
+          <MilestoneHistory milestones={data.milestones} selected={selected} onSelect={setSelected} />
+        </aside>
       </div>
     </section>
+  );
+}
+
+/** "Milestone pushed 2026-11-04T19:35:05Z" → "Pushed Nov 4, 7:35 PM"; other labels unchanged. */
+function milestoneTitle(label: string): string {
+  const m = label.match(/^Milestone pushed (\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2}))/);
+  if (!m) return label;
+  const d = new Date(m[1]);
+  if (Number.isNaN(d.getTime())) return label;
+  return `Pushed ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+
+function timeAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function MilestoneHistory({ milestones, selected, onSelect }: {
+  milestones: { id: string; seq_no: number; label: string; created_at: string; findings: number; languages: string[] }[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const list = [...milestones].reverse();
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between gap-2 border-b border-border/70 px-4 py-3">
+        <h3 id="history-title" className="text-sm font-semibold text-text">Version history</h3>
+        <span className="rounded-full bg-background px-2 py-0.5 text-[11px] font-semibold tabular-nums text-text-muted">{milestones.length}</span>
+      </div>
+      {list.length === 0 ? (
+        <div className="p-4"><EmptyState title="No milestones yet" hint="Push one with the skill or the button above." /></div>
+      ) : (
+        <ol className="relative max-h-[min(70vh,640px)] overflow-y-auto p-2">
+          {list.map((m, idx) => {
+            const active = selected === m.id;
+            const latest = idx === 0;
+            const last = idx === list.length - 1;
+            return (
+              <li key={m.id} className="relative">
+                {!last && <span aria-hidden className="absolute bottom-0 left-[22px] top-7 w-px bg-border" />}
+                <button
+                  type="button"
+                  aria-current={active || undefined}
+                  onClick={() => onSelect(m.id)}
+                  className={`group relative flex w-full cursor-pointer items-start gap-3 rounded-md px-2.5 py-2.5 text-left transition duration-fast ease-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:scale-[0.99] ${
+                    active ? "bg-primary/8" : "hover:bg-background"
+                  }`}
+                >
+                  <span
+                    aria-hidden
+                    className={`relative z-[1] mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums ring-4 ring-surface transition duration-fast ${
+                      active ? "bg-primary text-primary-fg" : m.findings > 0 ? "bg-error/12 text-error" : "bg-success/12 text-success"
+                    }`}
+                  >
+                    {m.seq_no}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`truncate text-sm font-medium ${active ? "text-primary" : "text-text"}`} title={m.label}>{milestoneTitle(m.label)}</span>
+                      {latest && <span className="shrink-0 rounded-full bg-primary/12 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-primary">Latest</span>}
+                    </span>
+                    <span className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted">
+                      <span className={`h-1.5 w-1.5 rounded-full ${m.findings > 0 ? "bg-error" : "bg-success"}`} aria-hidden />
+                      <span>{m.findings > 0 ? `${m.findings} to fix` : "Clean"}</span>
+                      <span aria-hidden>·</span>
+                      <time dateTime={m.created_at} title={new Date(m.created_at).toLocaleString()}>{timeAgo(m.created_at)}</time>
+                    </span>
+                  </span>
+                  {active && <span aria-hidden className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </Card>
   );
 }
 
@@ -1698,17 +1824,17 @@ function UploadBox({ projectId, onDone, onCancel }: { projectId: string; onDone:
 
 type MileData = Awaited<ReturnType<typeof api.milestone>>;
 
-function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { milestoneId: string; projectId: string; canPush: boolean; onChanged: () => void }) {
+function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, onChanged }: { milestoneId: string; projectId: string; projectName?: string; canPush: boolean; onChanged: () => void }) {
   const [tab, setTab] = useState("findings");
   const [data, setData] = useState<MileData | null>(null);
   const [openFile, setOpenFile] = useState<{ path: string; text: string } | null>(null);
   const [myProjects, setMyProjects] = useState<Awaited<ReturnType<typeof api.myProjects>>>([]);
   const [forkTo, setForkTo] = useState("");
   const [forking, setForking] = useState(false);
-  const [shotBusy, setShotBusy] = useState(false);
   const [fixing, setFixing] = useState<string | null>(null);
   const [loadError, setLoadError] = useState("");
   const toast = useToast();
+  const isPlatformAdmin = usePermission("admin:access");
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -1725,6 +1851,13 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
 
   return (
     <div>
+      <MilestoneShowcase
+        milestoneId={milestoneId}
+        projectName={projectName}
+        shots={shots}
+        canPush={canPush}
+        onShotsChanged={async () => { await load(); onChanged(); }}
+      />
       <Tabs
         ariaLabel="Milestone"
         value={tab}
@@ -1732,10 +1865,10 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
         items={[
           { key: "findings", label: `Findings (${open.length})` },
           { key: "fix", label: "Fix it" },
+          { key: "ai", label: "✦ AI review" },
           { key: "files", label: `Files (${data.files.length})` },
           { key: "todos", label: `To-dos & gaps (${data.todos.length})` },
           { key: "sbom", label: `SBOM (${data.sbom?.total ?? 0})` },
-          { key: "shots", label: `Screenshots (${shots.length})` },
         ]}
       />
       <div role="tabpanel" className="mt-4">
@@ -1863,27 +1996,15 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
 
         {tab === "sbom" && <SbomPanel milestoneId={milestoneId} sbom={data.sbom} />}
 
-        {tab === "shots" && (
-          <Card className="p-4">
-            <p className="text-sm text-text-muted">Remember how this milestone looked. Screenshots stay with this version in History.</p>
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {shots.map((k) => <ShotThumb key={k} blobKey={k} />)}
-            </div>
-            {shots.length === 0 && <p className="mt-3 text-sm text-text-muted">No screenshots yet.</p>}
-            {canPush && <form className="mt-4 flex flex-wrap gap-2" onSubmit={async (e) => {
-              e.preventDefault();
-              const file = e.currentTarget.querySelector<HTMLInputElement>("input[type=file]")?.files?.[0];
-              if (!file) { toast.error("Choose an image first."); return; }
-              setShotBusy(true);
-              try { await api.addScreenshot(milestoneId, file); await load(); onChanged(); toast.success("Screenshot attached."); }
-              catch (err) { toast.error(err instanceof Error ? err.message : "Upload failed."); }
-              finally { setShotBusy(false); }
-            }}>
-              <Input type="file" accept="image/*" aria-label="Screenshot image" className="w-auto" />
-              <Button type="submit" busy={shotBusy}>Attach screenshot</Button>
-            </form>}
-          </Card>
+        {tab === "ai" && (
+          <AiReviewPanel
+            milestoneId={milestoneId}
+            canPush={canPush}
+            isAdmin={isPlatformAdmin}
+            onOpenSettings={() => { window.history.pushState({}, "", "/admin/settings/ai"); window.dispatchEvent(new PopStateEvent("popstate")); }}
+          />
         )}
+
       </div>
 
       <RestoreCard milestoneId={milestoneId} seqNo={data.milestone.seq_no} label={data.milestone.label} />
@@ -1907,26 +2028,6 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
         </form>
       </Card>}
     </div>
-  );
-}
-
-/** Screenshot preview, fetched with the session token (an <img src> can't send it). */
-function ShotThumb({ blobKey }: { blobKey: string }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    let made: string | null = null;
-    void api.blobUrl(blobKey).then((u) => { made = u; if (live) setUrl(u); });
-    return () => { live = false; if (made) URL.revokeObjectURL(made); };
-  }, [blobKey]);
-  const name = blobKey.split("/").pop()?.replace(/^[0-9a-f]{64}-/, "") ?? "screenshot";
-  return (
-    <a href={url ?? undefined} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded-md border border-border bg-background">
-      {url
-        ? <img src={url} alt={name} className="aspect-video w-full object-cover transition-transform duration-normal group-hover:scale-[1.02]" />
-        : <Skeleton className="aspect-video w-full rounded-none" />}
-      <span className="block truncate px-2 py-1.5 text-xs text-text-muted">{name}</span>
-    </a>
   );
 }
 
@@ -2300,7 +2401,8 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
     go?.({ name: "admin", tab: nextTab });
   };
 
-  const isSettingsTab = tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso";
+  const isAiTab = tab === "settings-ai" || tab === "ai";
+  const isSettingsTab = !isAiTab && (tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso");
   const activeSettingsSubTab: AdminSettingsTab =
     tab === "settings-access" || tab === "access" ? "access"
     : tab === "settings-policy" || tab === "policy" ? "policy"
@@ -2320,6 +2422,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {isSettingsTab && activeSettingsSubTab === "policy" && "Governance Policies & Space Quotas"}
           {isSettingsTab && activeSettingsSubTab === "notifications" && "Notifications & Alerting"}
           {isSettingsTab && activeSettingsSubTab === "sso" && "Single Sign-On (SSO) & SCIM"}
+          {isAiTab && "AI review"}
         </h2>
         <p className="mt-1 text-sm text-text-muted">
           {tab === "vulns" && `${vulns?.total_open ?? 0} open (${vulns?.critical ?? 0} fix-now) across every project. Contact leaves a to-do on their latest milestone.`}
@@ -2330,6 +2433,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {isSettingsTab && activeSettingsSubTab === "policy" && "Push security gates, software license blocklists (SPDX), vulnerability remediation SLAs, and space resource quotas."}
           {isSettingsTab && activeSettingsSubTab === "notifications" && "Automated high/critical incident webhooks and outgoing SMTP mail transfer credentials."}
           {isSettingsTab && activeSettingsSubTab === "sso" && "Enterprise identity provider federation with OpenID Connect (OIDC) and automated SCIM v2 directory synchronization."}
+          {isAiTab && "Meta Muse reads milestones and explains, in plain words, the secrets, security gaps and bad habits scanners miss. Choose the model and manage the API key."}
         </p>
         {error && <div className="mt-3"><Alert variant="error">{error}</Alert></div>}
       </div>
@@ -2338,7 +2442,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
       <div className="lg:hidden mt-4 overflow-x-auto pb-1">
         <Tabs
           ariaLabel="Settings sections"
-          value={isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
+          value={isAiTab ? "settings-ai" : isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
           onChange={selectTab}
           items={[
             { key: "vulns", label: `Vulns${vulns ? ` (${vulns.total_open})` : ""}` },
@@ -2349,6 +2453,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
             { key: "settings-policy", label: "Policy" },
             { key: "settings-notifications", label: "Alerts" },
             { key: "settings-sso", label: "SSO" },
+            { key: "settings-ai", label: "AI" },
           ]}
         />
       </div>
@@ -2459,6 +2564,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           </div>
         )}
 
+        {isAiTab && <AiSettings />}
         {isSettingsTab && (
           <AdminSettings
             tab={activeSettingsSubTab}

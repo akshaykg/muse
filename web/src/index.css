@@ -123,6 +123,16 @@
   --z-toast: 60;
 }
 
+/* Layer utilities. `--z-*` in @theme is not a Tailwind v4 namespace, so
+   `z-overlay` etc. generated nothing and dialogs, the mobile menu and toasts
+   rendered under page content. */
+@utility z-base { z-index: 0; }
+@utility z-raised { z-index: 10; }
+@utility z-sticky { z-index: 20; }
+@utility z-dropdown { z-index: 40; }
+@utility z-overlay { z-index: 50; }
+@utility z-toast { z-index: 60; }
+
 @utility duration-fast {
   transition-duration: 120ms;
 }
