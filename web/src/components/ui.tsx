@@ -13,6 +13,7 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type Ref,
   type ReactNode,
   type SelectHTMLAttributes,
 } from "react";
@@ -109,9 +110,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             role={t.kind === "error" ? "alert" : undefined}
-            className="vf-toast pointer-events-auto flex items-start gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 shadow-overlay"
+            className="vf-toast pointer-events-auto flex items-start gap-2.5 rounded-lg border border-border bg-surface-elevated px-3.5 py-3 shadow-overlay"
           >
-            <span aria-hidden className={t.kind === "success" ? "text-success" : t.kind === "error" ? "text-error" : "text-info"}>
+            <span aria-hidden className={cx("mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold", t.kind === "success" ? "bg-success/15 text-success" : t.kind === "error" ? "bg-error/15 text-error" : "bg-info/15 text-info")}>
               {t.kind === "success" ? "✓" : t.kind === "error" ? "!" : "i"}
             </span>
             <span className="text-sm text-text">{t.text}</span>
@@ -185,20 +186,20 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const BUTTON_VARIANTS: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "bg-primary text-primary-fg shadow-surface hover:bg-primary-hover hover:shadow-raised hover:-translate-y-px active:translate-y-0 active:scale-[0.96] active:brightness-95 active:shadow-surface",
-  secondary: "border border-border bg-surface text-text shadow-surface hover:bg-background hover:border-text-muted/60 hover:-translate-y-px active:translate-y-0 active:scale-[0.96] active:bg-background/90 active:shadow-inner",
-  ghost: "text-text-muted hover:bg-background hover:text-text active:scale-[0.95] active:bg-text/10",
-  danger: "bg-error text-error-fg shadow-surface hover:brightness-105 hover:-translate-y-px active:translate-y-0 active:scale-[0.96] active:brightness-90",
+  primary: "bg-primary text-primary-fg shadow-[inset_0_1px_0_rgb(255_255_255/0.16),0_1px_2px_rgb(0_0_0/0.12)] hover:bg-primary-hover active:brightness-95",
+  secondary: "border border-border bg-surface text-text shadow-xs hover:border-text-muted/40 hover:bg-background active:bg-background/80",
+  ghost: "text-text-muted hover:bg-text/[0.06] hover:text-text active:bg-text/10",
+  danger: "bg-error text-error-fg shadow-[inset_0_1px_0_rgb(255_255_255/0.14)] hover:brightness-110 active:brightness-95",
 };
 
 export function Button({ variant = "primary", size = "md", busy, disabled, className, children, ...rest }: ButtonProps) {
   return (
     <button
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-md font-medium cursor-pointer select-none transition-all duration-fast ease-standard",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2",
-        "active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50",
-        size === "sm" ? "min-h-9 px-3 py-1.5 text-sm" : "min-h-11 px-4 py-2 text-sm",
+        "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-semibold tracking-[-0.005em] cursor-pointer select-none transition-[background-color,border-color,color,box-shadow,transform,filter] duration-fast ease-standard",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50",
+        size === "sm" ? "min-h-8 px-3 py-1.5 text-[13px]" : "min-h-10 px-4 py-2 text-sm",
         BUTTON_VARIANTS[variant],
         className,
       )}
@@ -212,13 +213,14 @@ export function Button({ variant = "primary", size = "md", busy, disabled, class
   );
 }
 
-export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
   return (
     <input
       className={cx(
-        "min-h-11 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text",
-        "transition duration-fast ease-standard placeholder:text-text-muted",
-        "hover:border-text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30",
+        "min-h-10 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text shadow-xs",
+        "transition duration-fast ease-standard placeholder:text-text-muted/80",
+        "hover:border-text-muted/50 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15",
+        "file:mr-3 file:rounded-sm file:border-0 file:bg-primary/10 file:px-2.5 file:py-1 file:text-xs file:font-semibold file:text-primary",
         "disabled:opacity-50",
         className,
       )}
@@ -231,9 +233,9 @@ export function Select({ className, children, ...rest }: SelectHTMLAttributes<HT
   return (
     <select
       className={cx(
-        "min-h-11 rounded-md border border-border bg-surface px-2 py-2 text-sm text-text",
-        "transition duration-fast ease-standard hover:border-text-muted",
-        "focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30",
+        "min-h-10 rounded-md border border-border bg-surface px-2.5 py-2 text-sm text-text shadow-xs",
+        "transition duration-fast ease-standard hover:border-text-muted/50",
+        "focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15",
         className,
       )}
       {...rest}
@@ -301,7 +303,7 @@ export function Alert({ variant = "error", children }: { variant?: "error" | "wa
     info: "border-info/40 bg-info/10 text-info",
   };
   return (
-    <div role={variant === "error" ? "alert" : "status"} className={cx("rounded-md border px-3 py-2 text-sm", styles[variant])}>
+    <div role={variant === "error" ? "alert" : "status"} className={cx("rounded-md border px-3 py-2.5 text-sm leading-relaxed", styles[variant])}>
       {children}
     </div>
   );
@@ -319,7 +321,7 @@ export function Spinner({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div aria-hidden className={cx("animate-pulse rounded-md bg-border/60", className)} />;
+  return <div aria-hidden className={cx("animate-pulse rounded-lg bg-text/[0.06]", className)} />;
 }
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
@@ -336,20 +338,23 @@ export function Badge({
   children: ReactNode;
 }) {
   const styles: Record<string, string> = {
-    neutral: "bg-background text-text-muted",
-    success: "bg-success/15 text-success",
-    warning: "bg-warning/15 text-warning",
-    danger: "bg-error/15 text-error",
-    primary: "bg-primary/15 text-primary",
+    neutral: "bg-text/[0.05] text-text-muted ring-text/10",
+    success: "bg-success/10 text-success ring-success/20",
+    warning: "bg-warning/10 text-warning ring-warning/25",
+    danger: "bg-error/10 text-error ring-error/20",
+    primary: "bg-primary/10 text-primary ring-primary/20",
   };
-  return <span className={cx("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium", styles[tone])}>{children}</span>;
+  return <span className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11.5px] font-semibold ring-1 ring-inset", styles[tone])}>{children}</span>;
 }
 
 export function EmptyState({ title, hint }: { title: string; hint?: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-border bg-surface px-4 py-8 text-center">
-      <p className="font-medium text-text">{title}</p>
-      {hint && <p className="mt-1 text-sm text-text-muted">{hint}</p>}
+    <div className="rounded-lg border border-dashed border-border bg-surface/60 px-4 py-10 text-center">
+      <span aria-hidden className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><path d="M3.3 7 12 12l8.7-5M12 22V12" /></svg>
+      </span>
+      <p className="font-semibold text-text">{title}</p>
+      {hint && <p className="mx-auto mt-1 max-w-sm text-sm text-text-muted">{hint}</p>}
     </div>
   );
 }
@@ -375,7 +380,7 @@ export function Tabs({
   ariaLabel: string;
 }) {
   return (
-    <div role="tablist" aria-label={ariaLabel} className="flex flex-wrap gap-1 border-b border-border">
+    <div role="tablist" aria-label={ariaLabel} className="flex gap-1 overflow-x-auto border-b border-border">
       {items.map((item, i) => {
         const active = item.key === value;
         return (
@@ -393,16 +398,16 @@ export function Tabs({
               document.getElementById(`${ariaLabel}-tab-${next.key}`)?.focus();
             }}
             className={cx(
-              "relative min-h-11 cursor-pointer select-none rounded-md px-3 py-2 text-sm font-medium transition-all duration-fast ease-standard active:scale-[0.96]",
+              "relative min-h-10 shrink-0 cursor-pointer select-none whitespace-nowrap rounded-t-md px-3 py-2 text-sm font-semibold transition-colors duration-fast ease-standard",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-              active ? "text-primary" : "text-text-muted hover:bg-background/60 hover:text-text",
+              active ? "text-text" : "text-text-muted hover:text-text",
             )}
           >
             {item.label}
             <span
               aria-hidden
               className={cx(
-                "absolute inset-x-2 -bottom-px h-0.5 bg-primary transition duration-normal ease-standard",
+                "absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-primary transition duration-normal ease-standard",
                 active ? "opacity-100" : "opacity-0",
               )}
             />
@@ -471,9 +476,9 @@ export function MenuItem({
       role="menuitem"
       onClick={onClick}
       className={cx(
-        "flex min-h-11 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition duration-fast ease-standard",
+        "flex min-h-9 w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition duration-fast ease-standard",
         "focus-visible:outline-2 focus-visible:outline-primary",
-        danger ? "text-error hover:bg-error/10" : "text-text hover:bg-background",
+        danger ? "text-error hover:bg-error/10" : "text-text hover:bg-text/[0.06]",
       )}
     >
       {children}
@@ -492,7 +497,7 @@ export function Avatar({ name, size = "md" }: { name: string; size?: "sm" | "md"
     <span
       aria-hidden
       className={cx(
-        "inline-flex items-center justify-center rounded-full bg-primary font-semibold text-primary-fg",
+        "inline-flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent font-semibold text-primary-fg ring-2 ring-surface",
         size === "sm" ? "h-8 w-8 text-xs" : "h-10 w-10 text-sm",
       )}
     >
@@ -520,17 +525,17 @@ export function Modal({
   return (
     <div className="fixed inset-0 z-overlay flex items-end justify-center p-0 sm:items-center sm:p-6" role="presentation">
       {/* Translucent scrim — click anywhere outside the card to dismiss */}
-      <button type="button" aria-label="Close dialog" onClick={onClose} className="absolute inset-0 bg-text/45 backdrop-blur-[2px]" />
+      <button type="button" aria-label="Close dialog" onClick={onClose} className="absolute inset-0 bg-[rgb(8_12_18/0.45)] backdrop-blur-sm" />
       <div
         ref={ref}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="vf-pop relative max-h-[90vh] w-full max-w-md overflow-auto rounded-t-lg border border-border bg-surface-elevated p-5 shadow-overlay sm:rounded-lg"
+        className="vf-pop relative max-h-[90vh] w-full max-w-md overflow-auto rounded-t-lg border border-border bg-surface-elevated p-6 shadow-overlay sm:rounded-lg"
       >
         <div className="flex items-start gap-3">
           <div>
-            <h3 className="font-serif text-lg font-bold">{title}</h3>
+            <h3 className="text-lg font-bold">{title}</h3>
             {hint && <p className="mt-0.5 text-sm text-text-muted">{hint}</p>}
           </div>
           <span className="ml-auto">
@@ -541,4 +546,9 @@ export function Modal({
       </div>
     </div>
   );
+}
+
+/** The signed-in user's role lookup for a space (null when not a member). */
+export function useRoleLookup(): (spaceId: string) => SpaceRoleName | null {
+  return useContext(PermContext).roleIn;
 }

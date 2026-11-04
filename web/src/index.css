@@ -5,45 +5,77 @@
  * Raw hex lives ONLY here as --dx-* values. Components use semantic
  * utilities (bg-surface, text-text-muted, border-border, bg-primary …).
  */
+/* Light theme (default). */
 :root,
 [data-theme="light"] {
-  --dx-background: #f6f5f1;
+  --dx-background: #f6f7f9;
   --dx-surface: #ffffff;
   --dx-surface-elevated: #ffffff;
-  --dx-primary: #0d6e63;
-  --dx-primary-hover: #0a5a51;
+  --dx-primary: #0f766e;
+  --dx-primary-hover: #115e59;
   --dx-primary-fg: #ffffff;
-  --dx-text: #1a2320;
-  --dx-text-muted: #5c6a64;
-  --dx-border: #ddd9cf;
-  --dx-success: #16794c;
+  --dx-accent: #14b8a6;
+  --dx-text: #0b1220;
+  --dx-text-muted: #5b6474;
+  --dx-border: #e3e6eb;
+  --dx-success: #15803d;
   --dx-success-fg: #ffffff;
-  --dx-warning: #9a6700;
-  --dx-warning-fg: #1a2320;
-  --dx-error: #b3261e;
+  --dx-warning: #b45309;
+  --dx-warning-fg: #1a1205;
+  --dx-error: #c2261d;
   --dx-error-fg: #ffffff;
-  --dx-info: #175cd3;
+  --dx-info: #2563eb;
   --dx-info-fg: #ffffff;
+  --dx-shadow: 15 23 42;
+  color-scheme: light;
 }
 
+/* Dark theme: explicit choice, or the OS setting when nothing was chosen. */
 [data-theme="dark"] {
-  --dx-background: #121816;
-  --dx-surface: #1a2320;
-  --dx-surface-elevated: #222d29;
-  --dx-primary: #2ea88f;
-  --dx-primary-hover: #3dbfa4;
-  --dx-primary-fg: #0c1210;
-  --dx-text: #e8edea;
-  --dx-text-muted: #9fb0a8;
-  --dx-border: #33413c;
-  --dx-success: #3cb179;
-  --dx-success-fg: #0c1210;
-  --dx-warning: #d9a521;
-  --dx-warning-fg: #1a2320;
-  --dx-error: #e0655f;
-  --dx-error-fg: #ffffff;
-  --dx-info: #6aa5ff;
-  --dx-info-fg: #0c1210;
+  --dx-background: #0a0d12;
+  --dx-surface: #11151c;
+  --dx-surface-elevated: #171c25;
+  --dx-primary: #2dd4bf;
+  --dx-primary-hover: #5eead4;
+  --dx-primary-fg: #04201c;
+  --dx-accent: #2dd4bf;
+  --dx-text: #e7ebf0;
+  --dx-text-muted: #94a0b2;
+  --dx-border: #232a35;
+  --dx-success: #4ade80;
+  --dx-success-fg: #052e16;
+  --dx-warning: #fbbf24;
+  --dx-warning-fg: #1a1205;
+  --dx-error: #f87171;
+  --dx-error-fg: #2a0705;
+  --dx-info: #60a5fa;
+  --dx-info-fg: #04122b;
+  --dx-shadow: 0 0 0;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --dx-background: #0a0d12;
+    --dx-surface: #11151c;
+    --dx-surface-elevated: #171c25;
+    --dx-primary: #2dd4bf;
+    --dx-primary-hover: #5eead4;
+    --dx-primary-fg: #04201c;
+    --dx-accent: #2dd4bf;
+    --dx-text: #e7ebf0;
+    --dx-text-muted: #94a0b2;
+    --dx-border: #232a35;
+    --dx-success: #4ade80;
+    --dx-success-fg: #052e16;
+    --dx-warning: #fbbf24;
+    --dx-warning-fg: #1a1205;
+    --dx-error: #f87171;
+    --dx-error-fg: #2a0705;
+    --dx-info: #60a5fa;
+    --dx-info-fg: #04122b;
+    --dx-shadow: 0 0 0;
+    color-scheme: dark;
+  }
 }
 
 @theme inline {
@@ -53,6 +85,7 @@
   --color-primary: var(--dx-primary);
   --color-primary-hover: var(--dx-primary-hover);
   --color-primary-fg: var(--dx-primary-fg);
+  --color-accent: var(--dx-accent);
   --color-text: var(--dx-text);
   --color-text-muted: var(--dx-text-muted);
   --color-border: var(--dx-border);
@@ -62,20 +95,25 @@
   --color-warning-fg: var(--dx-warning-fg);
   --color-error: var(--dx-error);
   --color-error-fg: var(--dx-error-fg);
+  /* "danger" was used in places but never defined, so those badges had no colour. */
+  --color-danger: var(--dx-error);
   --color-info: var(--dx-info);
   --color-info-fg: var(--dx-info-fg);
 
-  --font-sans: "Avenir Next", "Segoe UI", system-ui, sans-serif;
-  --font-serif: Georgia, "Times New Roman", serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Headings: same family, tighter — a crisp display face instead of Georgia. */
+  --font-serif: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
 
-  --shadow-surface: 0 1px 2px rgb(26 35 32 / 0.06);
-  --shadow-raised: 0 4px 16px rgb(26 35 32 / 0.1);
-  --shadow-overlay: 0 12px 32px rgb(26 35 32 / 0.18);
+  --shadow-xs: 0 1px 1px rgb(var(--dx-shadow) / 0.04);
+  --shadow-surface: 0 1px 2px rgb(var(--dx-shadow) / 0.05), 0 1px 1px rgb(var(--dx-shadow) / 0.03);
+  --shadow-raised: 0 8px 24px -6px rgb(var(--dx-shadow) / 0.14), 0 2px 6px rgb(var(--dx-shadow) / 0.06);
+  --shadow-overlay: 0 24px 48px -12px rgb(var(--dx-shadow) / 0.28), 0 4px 12px rgb(var(--dx-shadow) / 0.08);
 
   --z-base: 0;
   --z-raised: 10;
@@ -95,10 +133,55 @@
   transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
 
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
 body {
   background: var(--color-background);
   color: var(--color-text);
   font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "ss03";
+}
+h1, h2, h3, h4, .font-serif {
+  letter-spacing: -0.022em;
+}
+code, pre, kbd, .font-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: normal;
+}
+::selection {
+  background: color-mix(in oklab, var(--color-primary) 22%, transparent);
+}
+:focus-visible {
+  outline-color: var(--color-primary);
+}
+/* Thin, quiet scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--color-text-muted) 35%, transparent) transparent;
+}
+
+/* Soft brand glow behind the page and the sign-in hero. */
+.vf-backdrop {
+  background:
+    radial-gradient(1200px 500px at 85% -10%, color-mix(in oklab, var(--color-accent) 10%, transparent), transparent 60%),
+    radial-gradient(900px 400px at -10% 110%, color-mix(in oklab, var(--color-info) 7%, transparent), transparent 60%),
+    var(--color-background);
+}
+.vf-grid {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-text) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--color-text) 6%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+.vf-gradient-text {
+  background: linear-gradient(120deg, var(--color-primary), var(--color-accent) 55%, var(--color-info));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 @keyframes vf-rise {
@@ -145,7 +228,7 @@ body {
   75% { opacity: 0.95; }
 }
 
-.vf-page { animation: vf-rise 200ms cubic-bezier(0.2, 0, 0, 1); }
+.vf-page { animation: vf-rise 160ms cubic-bezier(0.2, 0, 0, 1); }
 .vf-pop { animation: vf-pop 120ms cubic-bezier(0.2, 0, 0, 1); transform-origin: top right; }
 .vf-toast { animation: vf-toast-in 200ms cubic-bezier(0.2, 0, 0, 1); }
 .vf-float { animation: vf-float 5s ease-in-out infinite; }

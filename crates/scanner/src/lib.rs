@@ -83,8 +83,7 @@ pub fn extract_zip_safely(zip_bytes: &[u8], dest: &Path, limits: &ZipLimits) -> 
         if entry.size() > limits.max_file_bytes {
             return Err(IngestError::FileTooLarge(name));
         }
-        total += entry.size();
-        if total > limits.max_uncompressed {
+        if total + entry.size() > limits.max_uncompressed {
             return Err(IngestError::TooLarge);
         }
         let out = dest.join(&name);
@@ -97,9 +96,16 @@ pub fn extract_zip_safely(zip_bytes: &[u8], dest: &Path, limits: &ZipLimits) -> 
             std::fs::write(&out, format!("[symlink -> {target}]"))?;
         } else {
             let mut file = std::fs::File::create(&out)?;
-            let copied = std::io::copy(&mut entry.take(limits.max_file_bytes + 1), &mut file)?;
+            // Cap by what is actually written, not what the zip header claims:
+            // a forged header could declare tiny sizes and still unpack gigabytes.
+            let budget = limits.max_file_bytes.min(limits.max_uncompressed.saturating_sub(total)) + 1;
+            let copied = std::io::copy(&mut entry.take(budget), &mut file)?;
             if copied > limits.max_file_bytes {
                 return Err(IngestError::FileTooLarge(name));
+            }
+            total += copied;
+            if total > limits.max_uncompressed {
+                return Err(IngestError::TooLarge);
             }
         }
         written.push(out);
@@ -170,7 +176,9 @@ pub fn scan_practices(root: &Path, milestone_id: &str) -> Vec<Finding> {
         (Regex::new(r"verify\s*=\s*False|rejectUnauthorized\s*:\s*false|InsecureSkipVerify\s*:\s*true").unwrap(), "high", "Security check switched off",
          "A safety check that protects the connection to another service is turned off, so traffic can be intercepted.",
          "Turn the check back on and fix the certificate/configuration problem instead."),
-        (Regex::new("(?i)(SELECT|INSERT|UPDATE|DELETE)[^\"]*(\\+|%s)").unwrap(), "high", "Database query built from text",
+        // Matches "SELECT ..." + userInput, %s and ${} templates. The old pattern
+        // stopped at the closing quote, so the classic `"..." + id` was missed.
+        (Regex::new(r#"(?i)\b(SELECT|INSERT|UPDATE|DELETE)\b.*(["'`]\s*\+|%s|\$\{|\.format\()"#).unwrap(), "high", "Database query built from text",
          "This database query is built by gluing text together. A user can change the query and read or delete data they should not see.",
          "Use parameterised queries ($1 / ? placeholders) so user text is always treated as data."),
         (Regex::new(r"DEBUG\s*=\s*[Tt]rue").unwrap(), "low", "Debug mode left on",
@@ -267,7 +275,15 @@ impl LangScanner for RustScanner {
         }
         if let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) {
             if let Ok(parsed) = toml::from_str::<CargoToml>(&text) {
-                return parsed.dependencies.keys().map(|k| Dep { ecosystem: "crates.io".into(), name: k.clone(), version: "0.0.0".into() }).collect();
+                // Without a lockfile use the declared requirement; skip deps with
+                // no version instead of querying "0.0.0" (every advisory matched).
+                return parsed.dependencies.iter().filter_map(|(k, v)| {
+                    let req = v.as_str().map(str::to_string)
+                        .or_else(|| v.get("version").and_then(|x| x.as_str()).map(str::to_string))?;
+                    let ver = req.trim_start_matches(['^', '~', '=', '>', ' ']).to_string();
+                    if ver.is_empty() || !ver.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) { return None; }
+                    Some(Dep { ecosystem: "crates.io".into(), name: k.clone(), version: ver })
+                }).collect();
             }
         }
         Vec::new()
@@ -285,8 +301,13 @@ impl LangScanner for PyScanner {
                 if line.is_empty() || line.starts_with('#') { continue }
                 if let Some((n, v)) = line.split_once("==") {
                     out.push(Dep { ecosystem: "PyPI".into(), name: n.trim().into(), version: v.trim().into() });
-                } else if let Some((n, _)) = line.split_once(">=") {
-                    out.push(Dep { ecosystem: "PyPI".into(), name: n.trim().into(), version: "0.0.0".into() });
+                } else if let Some((n, v)) = line.split_once(">=") {
+                    // Use the lower bound: "0.0.0" made OSV report every advisory
+                    // ever published for the package as a false positive.
+                    let v = v.split([',', ';', ' ']).next().unwrap_or("").trim();
+                    if !v.is_empty() {
+                        out.push(Dep { ecosystem: "PyPI".into(), name: n.trim().into(), version: v.into() });
+                    }
                 }
             }
         }
@@ -497,7 +518,10 @@ pub async fn query_osv(deps: &[Dep], timeout_s: u64, milestone_id: &str) -> Vec<
     // querybatch returns IDs only — fetch each advisory once for severity
     // (CVSS), affected ranges (fixed version) and summary. Details are cached
     // on disk (OSV_CACHE_FILE, default data/osv-cache.json) for OSV_CACHE_HOURS.
-    let cache_path = std::env::var("OSV_CACHE_FILE").unwrap_or_else(|_| "data/osv-cache.json".into());
+    let cache_path = std::env::var("OSV_CACHE_FILE").unwrap_or_else(|_| {
+        let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "data".into());
+        format!("{}/osv-cache.json", dir.trim_end_matches('/'))
+    });
     let cache_ttl_s: i64 = std::env::var("OSV_CACHE_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24) * 3600;
     let mut cache: std::collections::HashMap<String, (i64, serde_json::Value)> =
         std::fs::read_to_string(&cache_path).ok()
@@ -587,10 +611,17 @@ pub async fn query_osv(deps: &[Dep], timeout_s: u64, milestone_id: &str) -> Vec<
 
 // ---------------------------------------------------------------- helpers
 
+/// Unique finding id. It used to be "nanoseconds + pid", which repeats when
+/// two findings are made within one clock tick (common on macOS, where the
+/// clock is microsecond-grained); the repeated id overwrote the earlier
+/// finding in the store, so real problems silently disappeared.
 fn uuid_like() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    format!("find-{}-{}", n, std::process::id())
+    let c = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("find-{n:x}-{:x}-{c:x}", std::process::id())
 }
 
 fn mk(milestone_id: &str, kind: &str, severity: &str, title: &str, explain: &str, fix: &str,
@@ -635,6 +666,22 @@ pub fn count_languages(root: &Path) -> Vec<String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn flags_sql_built_from_text() {
+        let dir = std::env::temp_dir().join(format!("vf-sql-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.js"), "db.query(\"SELECT * FROM users WHERE id = \" + req.query.id)\nconst q = `SELECT * FROM t WHERE id = ${id}`;\ndb.query('SELECT 1')\n").unwrap();
+        let found: Vec<_> = scan_practices(&dir, "m").into_iter().filter(|f| f.plain_title == "Database query built from text").collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(found.len(), 2, "both concatenation and template should be flagged, the constant query not");
+    }
+
+    #[test]
+    fn finding_ids_never_repeat() {
+        let ids: HashSet<String> = (0..10_000).map(|_| uuid_like()).collect();
+        assert_eq!(ids.len(), 10_000);
+    }
 
     fn limits() -> ZipLimits {
         ZipLimits { max_compressed: 50_000_000, max_uncompressed: 50_000_000, max_entries: 1000, max_file_bytes: 10_000_000, max_ratio: 100.0 }

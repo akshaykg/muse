@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, getToken, setToken } from "./lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { api, getToken, setToken, setRefreshToken, signOutEverywhere } from "./lib/api";
 import {
   Alert,
   Avatar,
@@ -19,6 +19,7 @@ import {
   Tabs,
   ToastProvider,
   usePermission,
+  useRoleLookup,
   useToast,
   Toggle,
   type SpaceRoleName,
@@ -44,6 +45,8 @@ import {
   IconSearch,
   IconMenu,
   IconClose,
+  IconSun,
+  IconMoon,
 } from "./components/icons";
 import { NotFoundScreen, ServerErrorScreen, ErrorBoundary } from "./components/ErrorScreens";
 import { AdminSettings, type AdminSettingsTab } from "./components/AdminSettings";
@@ -130,6 +133,35 @@ function sevTone(sev: string): "danger" | "warning" | "neutral" {
   return "neutral";
 }
 
+type ThemeChoice = "light" | "dark";
+
+/** Light/dark toggle. Starts from the saved choice, else the OS setting. */
+function useTheme(): [ThemeChoice, () => void] {
+  const [theme, setTheme] = useState<ThemeChoice>(() => {
+    const saved = document.documentElement.getAttribute("data-theme");
+    if (saved === "light" || saved === "dark") return saved;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
+  const toggle = useCallback(() => {
+    setTheme((t) => {
+      const next = t === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("vf_theme", next); } catch { /* private mode */ }
+      return next;
+    });
+  }, []);
+  return [theme, toggle];
+}
+
+/** OIDC sign-in returns to /#oidc_token=…; take the token and clean the URL. */
+function consumeOidcToken() {
+  const m = window.location.hash.match(/oidc_token=([^&]+)/);
+  if (!m) return;
+  setToken(decodeURIComponent(m[1]));
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+consumeOidcToken();
+
 export default function App() {
   return (
     <ToastProvider>
@@ -152,6 +184,7 @@ function Shell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [settingsCollapsed, setSettingsCollapsed] = useState(() => localStorage.getItem("vf_settings_collapsed") === "1");
   const [adminCounts, setAdminCounts] = useState<{ vulns?: number; users?: number; groups?: number }>({});
+  const [theme, toggleTheme] = useTheme();
 
   const toggleSettingsCollapsed = useCallback(() => {
     setSettingsCollapsed((v) => {
@@ -205,6 +238,13 @@ function Shell() {
 
   useEffect(() => { void refreshMe(); }, [refreshMe]);
 
+  // Pages that change which spaces you belong to ask the shell to reload the nav.
+  useEffect(() => {
+    const onChange = () => void refreshMe();
+    window.addEventListener("vf:spaces-changed", onChange);
+    return () => window.removeEventListener("vf:spaces-changed", onChange);
+  }, [refreshMe]);
+
   const perms = useMemo(
     () => ({
       isAdmin: me?.user.is_platform_admin ?? false,
@@ -229,8 +269,9 @@ function Shell() {
   }
 
   const signOut = () => {
-    setToken(null);
+    void signOutEverywhere();
     setMe(null);
+    setView({ name: "spaces" }, true);
   };
 
   const toggleCollapsed = () => {
@@ -261,12 +302,12 @@ function Shell() {
 
   return (
     <PermissionsProvider value={perms}>
-      <div className="flex h-screen overflow-hidden bg-background text-text">
+      <div className="vf-backdrop flex h-screen overflow-hidden text-text">
         {/* Left navigation — desktop: collapsible + drag-resizable (persisted) */}
         <aside
           aria-label="Left navigation"
           style={collapsed ? undefined : { width: sideW }}
-          className={`hidden h-full shrink-0 flex-col overflow-hidden border-r border-border bg-surface lg:relative lg:flex ${collapsed ? "w-16" : ""}`}
+          className={`hidden h-full shrink-0 flex-col overflow-hidden border-r border-border bg-surface/80 backdrop-blur-xl lg:relative lg:flex ${collapsed ? "w-16" : ""}`}
         >
           {/* Nav collapse at top: icon button to toggle — fixed h-16 aligned with top nav header */}
           <div className={`flex h-16 shrink-0 items-center border-b border-border px-3 ${collapsed ? "justify-center" : "justify-between"}`}>
@@ -279,8 +320,8 @@ function Shell() {
                 >
                   <VibeForgeLogo size={28} />
                   <span className="min-w-0">
-                    <span className="block truncate font-serif text-base font-bold leading-tight">VibeForge</span>
-                    <span className="block text-[10px] leading-tight text-text-muted">Milestones, not git</span>
+                    <span className="block truncate text-[15px] font-bold leading-tight tracking-tight">VibeForge</span>
+                    <span className="block text-[11px] leading-tight text-text-muted">Milestones, not git</span>
                   </span>
                 </button>
                 <button
@@ -319,7 +360,7 @@ function Shell() {
 
           <nav aria-label="Spaces" className="flex-1 overflow-y-auto p-2">
             <SideItem collapsed={collapsed} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => setView({ name: "spaces" })} />
-            {!collapsed && <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>}
+            {!collapsed && <p className="px-3 pb-1.5 pt-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted/80">Your spaces</p>}
             <div className="space-y-0.5">
               {me.spaces.map((sp) => (
                 <SideItem
@@ -606,7 +647,7 @@ function Shell() {
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {/* Top nav: search + profile only (fixed, never scrolls) — fixed h-16 aligned with sidebars */}
-          <header className="z-sticky h-16 shrink-0 border-b border-border bg-surface/95 shadow-surface backdrop-blur">
+          <header className="z-sticky h-16 shrink-0 border-b border-border bg-surface/75 backdrop-blur-xl">
             <div className="flex h-full items-center gap-2.5 px-3 sm:px-4">
               <div className="flex items-center gap-2 lg:hidden">
                 <button
@@ -628,8 +669,17 @@ function Shell() {
                 </button>
               </div>
               <GlobalSearch go={setView} spaces={me.spaces} />
-              <div className="ml-auto">
-                <Menu label="Profile menu" button={<span className="flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-3 shadow-surface transition-all duration-fast hover:bg-background active:scale-[0.96] cursor-pointer"><Avatar name={me.user.display_name} size="sm" /><span className="hidden max-w-36 truncate text-sm font-medium sm:inline">{me.user.display_name}</span><span aria-hidden className="text-xs text-text-muted">▾</span></span>}>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+                  title={theme === "dark" ? "Light theme" : "Dark theme"}
+                  className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-text-muted shadow-xs transition-colors duration-fast hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  {theme === "dark" ? <IconSun /> : <IconMoon />}
+                </button>
+                <Menu label="Profile menu" button={<span className="flex items-center gap-2 rounded-full border border-border bg-surface py-0.5 pl-0.5 pr-3 shadow-xs transition-colors duration-fast hover:bg-background cursor-pointer"><Avatar name={me.user.display_name} size="sm" /><span className="hidden max-w-36 truncate text-sm font-medium sm:inline">{me.user.display_name}</span><span aria-hidden className="text-xs text-text-muted">▾</span></span>}>
                   {(close) => (
                     <>
                       <div className="px-3 py-2">
@@ -652,14 +702,15 @@ function Shell() {
             </div>
           </header>
 
-          <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6">
+          <main className="w-full flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-8 sm:py-8">
             <ErrorBoundary onHome={() => setView({ name: "spaces" })}>
               <div key={view.name + ("id" in view ? view.id : "")} className="vf-page">
                 {view.name === "spaces" && <Spaces me={me} go={setView} />}
                 {view.name === "space" && <SpaceDetail spaceId={view.id} label={view.label} go={setView} />}
                 {view.name === "project" && <ProjectDetail projectId={view.id} milestoneId={view.milestoneId} go={setView} />}
                 {view.name === "profile" && <Profile />}
-                {view.name === "admin" && <Admin initialTab={view.tab} go={setView} onCountsUpdate={setAdminCounts} />}
+                {view.name === "admin" && <Admin initialTab={view.tab} go={setView} onCountsUpdate={setAdminCounts} meId={me.user.id} />}
                 {view.name === "marketplace" && <Marketplace go={setView} />}
                 {view.name === "404" && (
                   <NotFoundScreen
@@ -677,6 +728,7 @@ function Shell() {
                 )}
               </div>
             </ErrorBoundary>
+            </div>
           </main>
         </div>
       </div>
@@ -695,23 +747,23 @@ function SideItem({
       title={collapsed ? label : undefined}
       aria-current={active || undefined}
       onClick={onClick}
-      className={`group relative flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-fast ease-standard cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.96] ${
+      className={`group relative flex min-h-9 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors duration-fast ease-standard cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
         active
-          ? "bg-primary/15 font-semibold text-primary shadow-xs"
-          : "text-text-muted hover:bg-background hover:text-text active:bg-background/80"
+          ? "bg-primary/10 font-semibold text-text"
+          : "text-text-muted hover:bg-text/[0.05] hover:text-text"
       } ${collapsed ? "justify-center px-0" : ""}`}
     >
       <span
         aria-hidden
         className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors duration-fast ${
-          active ? "bg-primary text-primary-fg shadow-xs" : "bg-background/80 text-text-muted group-hover:bg-background group-hover:text-text"
+          active ? "bg-primary text-primary-fg shadow-xs" : "bg-text/[0.05] text-text-muted group-hover:text-text"
         }`}
       >
         {icon}
       </span>
       {!collapsed && <span className="min-w-0 flex-1 truncate text-left">{label}</span>}
       {!collapsed && hint && (
-        <span className="rounded bg-background/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+        <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted/80">
           {hint}
         </span>
       )}
@@ -729,7 +781,22 @@ function GlobalSearch({ go, spaces }: { go: (v: View) => void; spaces: Me["space
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<Awaited<ReturnType<typeof api.myProjects>>>([]);
-  useEffect(() => { void api.myProjects().then(setProjects).catch(() => {}); }, []);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Refresh on focus so projects created a moment ago are searchable.
+  const loadProjects = useCallback(() => { void api.myProjects().then(setProjects).catch(() => {}); }, []);
+  useEffect(loadProjects, [loadProjects]);
+  // ⌘K / Ctrl+K or "/" jumps to search from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName));
+      if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing)) {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const q = query.trim().toLowerCase();
   const spaceHits = q ? spaces.filter((sp) => sp.name.toLowerCase().includes(q)).slice(0, 5) : [];
@@ -740,13 +807,14 @@ function GlobalSearch({ go, spaces }: { go: (v: View) => void; spaces: Me["space
     <div className="relative w-full max-w-xl">
       <IconSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
       <Input
+        ref={inputRef}
         type="search"
         value={query}
         placeholder="Search spaces and projects…"
         aria-label="Search spaces and projects"
-        className="pl-9"
+        className="pl-9 pr-14"
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => { setOpen(true); loadProjects(); }}
         onBlur={() => window.setTimeout(() => setOpen(false), 120)}
         onKeyDown={(e) => {
           if (e.key === "Escape") setOpen(false);
@@ -754,6 +822,7 @@ function GlobalSearch({ go, spaces }: { go: (v: View) => void; spaces: Me["space
           else if (e.key === "Enter" && spaceHits[0]) { go({ name: "space", id: spaceHits[0].id, label: spaceHits[0].name }); setOpen(false); }
         }}
       />
+      <kbd aria-hidden className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-text-muted sm:block">⌘K</kbd>
       {open && q && (
         <div role="listbox" aria-label="Search results" className="vf-pop absolute left-0 right-0 top-[calc(100%+6px)] z-dropdown overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-overlay">
           {!hasHits && <p className="px-3 py-3 text-sm text-text-muted">No spaces or projects match “{query}”.</p>}
@@ -778,14 +847,20 @@ function GlobalSearch({ go, spaces }: { go: (v: View) => void; spaces: Me["space
   );
 }
 
+const IS_LOCAL_DEMO = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+
 function Login({ onDone }: { onDone: () => void }) {
-  const [email, setEmail] = useState("admin@vibeforge.local");
-  const [password, setPassword] = useState("admin12345");
+  // Prefill the seeded demo account only on a local install, never on a real server.
+  const [email, setEmail] = useState(IS_LOCAL_DEMO ? "admin@vibeforge.local" : "");
+  const [password, setPassword] = useState(IS_LOCAL_DEMO ? "admin12345" : "");
   const [totp, setTotp] = useState("");
   const [mfaNeeded, setMfaNeeded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [mode, setMode] = useState<"signin" | "reset">("signin");
+  const [resetToken, setResetToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -794,7 +869,7 @@ function Login({ onDone }: { onDone: () => void }) {
     try {
       const r = await api.login(email.trim(), password, totp || undefined);
       setToken(r.token);
-      localStorage.setItem("vf_refresh", r.refresh_token);
+      setRefreshToken(r.refresh_token);
       onDone();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Sign-in failed.";
@@ -805,48 +880,137 @@ function Login({ onDone }: { onDone: () => void }) {
     }
   }
 
+  async function forgot() {
+    setError("");
+    if (!email.trim()) { setError("Enter your email first, then choose Forgot password."); return; }
+    try {
+      const r = await api.forgot(email.trim());
+      if (r.reset_token) setResetToken(r.reset_token);
+      setNotice(r.message);
+    } catch { setNotice("If that email has an account, a reset link is on its way."); }
+    setMode("reset");
+  }
+
+  async function reset(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api.resetPassword(resetToken.trim(), newPassword);
+      setPassword("");
+      setNewPassword("");
+      setMode("signin");
+      setNotice("Password changed. Sign in with the new one.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset the password.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const features = [
+    ["Milestones, not git", "Every push is a scanned, numbered snapshot you can open, fork or restore."],
+    ["Plain-English findings", "Leaked keys, risky code and vulnerable libraries, with copy-paste fixes."],
+    ["Works with your AI tool", "Push from Claude Code, Codex or any SKILL.md tool with one token."],
+  ];
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10 text-text">
-      <Card className="vf-page w-full max-w-md p-6 sm:p-8">
-        <span aria-hidden className="flex h-11 w-11 items-center justify-center rounded-md bg-primary font-serif text-xl font-bold text-primary-fg">V</span>
-        <h1 className="mt-4 font-serif text-2xl font-bold">Welcome to VibeForge</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Store AI-built projects as milestones. Scan them. Share them safely.
-        </p>
-        <form className="mt-6 space-y-4" onSubmit={submit}>
-          <label className="block">
-            <Label>Email</Label>
-            <span className="mt-1 block"><Input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></span>
-          </label>
-          <label className="block">
-            <Label>Password</Label>
-            <span className="mt-1 block"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></span>
-          </label>
-          {mfaNeeded && (
-            <label className="block">
-              <Label>Authenticator code</Label>
-              <span className="mt-1 block"><Input inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={totp} onChange={(e) => setTotp(e.target.value)} /></span>
-            </label>
-          )}
-          {error && <Alert>{error}</Alert>}
-          {notice && <Alert variant="info">{notice}</Alert>}
-          <Button type="submit" busy={busy} className="w-full">
-            {busy ? "Signing in…" : "Sign in"}
-          </Button>
-        </form>
-        <div className="mt-3 text-right">
-          <Button variant="ghost" size="sm" onClick={async () => {
-            try {
-              const r = await api.forgot(email.trim());
-              setNotice(r.reset_token ? `${r.message} Token: ${r.reset_token}` : r.message);
-            } catch { setNotice("If that email has an account, a reset link is on its way."); }
-          }}>Forgot password?</Button>
+    <div className="vf-backdrop grid min-h-screen text-text lg:grid-cols-[1.1fr_1fr]">
+      {/* Brand panel */}
+      <aside className="relative hidden overflow-hidden border-r border-border lg:flex lg:flex-col lg:justify-between lg:p-12">
+        <div aria-hidden className="vf-grid absolute inset-0" />
+        <div className="relative flex items-center gap-2.5">
+          <VibeForgeLogo size={34} />
+          <span className="text-lg font-bold tracking-tight">VibeForge</span>
         </div>
-        <p className="mt-5 text-xs leading-relaxed text-text-muted">
-          First run seeds <code className="rounded-sm bg-background px-1">admin@vibeforge.local / admin12345</code> (change via{" "}
-          <code className="rounded-sm bg-background px-1">ADMIN_PASSWORD</code>). Ask your admin if you need an account.
-        </p>
-      </Card>
+        <div className="relative max-w-lg">
+          <p className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1 text-xs font-semibold text-text-muted backdrop-blur">
+            <span className="h-1.5 w-1.5 rounded-full bg-success" /> Artifactory for AI-built projects
+          </p>
+          <h1 className="mt-5 text-5xl font-extrabold leading-[1.05] tracking-tight">
+            Ship what your AI builds. <span className="vf-gradient-text">Safely.</span>
+          </h1>
+          <p className="mt-4 text-base leading-relaxed text-text-muted">
+            Store every version as a milestone, scan it automatically, and roll back to any point in one click.
+          </p>
+          <ul className="mt-8 space-y-4">
+            {features.map(([t, d]) => (
+              <li key={t} className="flex gap-3">
+                <span aria-hidden className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/12 text-xs font-bold text-primary ring-1 ring-primary/20">✓</span>
+                <span>
+                  <span className="block text-sm font-semibold">{t}</span>
+                  <span className="block text-sm text-text-muted">{d}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <p className="relative text-xs text-text-muted">Open standard · vibe-artifact/1.0</p>
+      </aside>
+
+      {/* Form panel */}
+      <main className="flex items-center justify-center px-5 py-10">
+        <div className="vf-page w-full max-w-sm">
+          <div className="flex items-center gap-2.5 lg:hidden">
+            <VibeForgeLogo size={32} />
+            <span className="text-lg font-bold tracking-tight">VibeForge</span>
+          </div>
+          {mode === "signin" ? (
+            <>
+              <h2 className="mt-6 text-2xl font-bold tracking-tight lg:mt-0">Sign in</h2>
+              <p className="mt-1 text-sm text-text-muted">Welcome back. Pick up where your AI left off.</p>
+              <form className="mt-7 space-y-4" onSubmit={submit}>
+                <label className="block">
+                  <Label>Email</Label>
+                  <span className="mt-1.5 block"><Input type="email" autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required /></span>
+                </label>
+                <label className="block">
+                  <span className="flex items-center justify-between">
+                    <Label>Password</Label>
+                    <button type="button" onClick={() => void forgot()} className="cursor-pointer text-xs font-semibold text-primary hover:underline">Forgot password?</button>
+                  </span>
+                  <span className="mt-1.5 block"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></span>
+                </label>
+                {mfaNeeded && (
+                  <label className="block">
+                    <Label>Authenticator code</Label>
+                    <span className="mt-1.5 block"><Input inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={totp} onChange={(e) => setTotp(e.target.value)} autoFocus /></span>
+                  </label>
+                )}
+                {error && <Alert>{error}</Alert>}
+                {notice && <Alert variant="success">{notice}</Alert>}
+                <Button type="submit" busy={busy} className="w-full">
+                  {busy ? "Signing in…" : "Sign in"}
+                </Button>
+              </form>
+              {IS_LOCAL_DEMO && (
+                <p className="mt-6 rounded-md border border-border bg-surface/70 px-3 py-2.5 text-xs leading-relaxed text-text-muted">
+                  Local demo account: <code className="text-text">admin@vibeforge.local</code> / <code className="text-text">admin12345</code>. Change it with <code>ADMIN_PASSWORD</code>.
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <h2 className="mt-6 text-2xl font-bold tracking-tight lg:mt-0">Reset your password</h2>
+              <p className="mt-1 text-sm text-text-muted">Paste the one-time token from your email and choose a new password.</p>
+              <form className="mt-7 space-y-4" onSubmit={reset}>
+                {notice && <Alert variant="info">{notice}</Alert>}
+                <label className="block">
+                  <Label>Reset token</Label>
+                  <span className="mt-1.5 block"><Input value={resetToken} onChange={(e) => setResetToken(e.target.value)} required className="font-mono" /></span>
+                </label>
+                <label className="block">
+                  <Label>New password</Label>
+                  <span className="mt-1.5 block"><Input type="password" autoComplete="new-password" minLength={8} placeholder="At least 8 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required /></span>
+                </label>
+                {error && <Alert>{error}</Alert>}
+                <Button type="submit" busy={busy} className="w-full">Set new password</Button>
+                <Button type="button" variant="ghost" className="w-full" onClick={() => { setMode("signin"); setError(""); setNotice(""); }}>Back to sign in</Button>
+              </form>
+            </>
+          )}
+        </div>
+      </main>
     </div>
   );
 }
@@ -986,7 +1150,11 @@ function Spaces({ me, go }: { me: Me; go: (v: View) => void }) {
           <form className="grid gap-4" onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true);
-            try { await api.createSpace(name); setName(""); setShowCreate(false); await load(); toast.success("Space created."); }
+            try {
+              await api.createSpace(name); setName(""); setShowCreate(false); await load();
+              window.dispatchEvent(new Event("vf:spaces-changed"));
+              toast.success("Space created.");
+            }
             catch (err) { toast.error(err instanceof Error ? err.message : "Could not create the space."); }
             finally { setBusy(false); }
           }}>
@@ -1232,6 +1400,7 @@ function SpaceDetail({ spaceId, label, go }: { spaceId: string; label: string; g
 
 function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; milestoneId?: string; go: (v: View, replace?: boolean) => void }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.project>> | null>(null);
+  const roleIn = useContextRole();
   const [selected, setSelectedState] = useState<string | null>(milestoneId ?? null);
   const [showPush, setShowPush] = useState(false);
   const [error, setError] = useState("");
@@ -1265,15 +1434,56 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
     return <div className="space-y-3"><Skeleton className="h-10 w-64" /><Skeleton className="h-40" /></div>;
   }
 
+  const role = roleIn(data.project.space_id);
+  return <ProjectBody data={data} role={role} selected={selected} setSelected={setSelected} showPush={showPush} setShowPush={setShowPush} load={load} projectId={projectId} go={go} />;
+}
+
+/** The viewer's role in a space, from the signed-in user's space list. */
+function useContextRole() {
+  const isAdmin = usePermission("admin:access");
+  const ctxRole = useRoleLookup();
+  return useCallback((spaceId: string): SpaceRoleName | null => (isAdmin ? "owner" : ctxRole(spaceId)), [isAdmin, ctxRole]);
+}
+
+function ProjectBody({ data, role, selected, setSelected, showPush, setShowPush, load, projectId, go }: {
+  data: Awaited<ReturnType<typeof api.project>>;
+  role: SpaceRoleName | null;
+  selected: string | null;
+  setSelected: (mid: string) => void;
+  showPush: boolean;
+  setShowPush: (fn: (v: boolean) => boolean) => void;
+  load: () => Promise<void>;
+  projectId: string;
+  go: (v: View, replace?: boolean) => void;
+}) {
+  const canPush = usePermission("milestones:push", role);
+  const canManage = usePermission("members:manage", role);
+  const latest = data.milestones[data.milestones.length - 1];
   return (
     <section aria-labelledby="project-title">
-      <Button variant="ghost" size="sm" onClick={() => go({ name: "space", id: data.project.space_id, label: data.project.name })}>← Back to space</Button>
-      <h2 id="project-title" className="mt-2 font-serif text-3xl font-bold">{data.project.name}</h2>
-      <p className="mt-1 max-w-2xl text-sm text-text-muted">
-        Each push from the skill saves a new milestone. Nothing is overwritten — fork any milestone to try a different direction.
-      </p>
+      {role
+        ? <Button variant="ghost" size="sm" onClick={() => go({ name: "space", id: data.project.space_id, label: "" })}>← Back to space</Button>
+        : <Button variant="ghost" size="sm" onClick={() => go({ name: "marketplace" })}>← Marketplace</Button>}
+      <div className="mt-3 flex flex-wrap items-start gap-4">
+        <ProjectFavicon projectId={data.project.id} name={data.project.name} />
+        <div className="min-w-0 flex-1 basis-64">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 id="project-title" className="text-3xl font-bold tracking-tight">{data.project.name}</h2>
+            {data.project.visibility === "public" && <Badge tone="primary">Public</Badge>}
+            {latest && <Badge>Latest #{latest.seq_no}</Badge>}
+          </div>
+          <p className="mt-1 max-w-2xl text-sm text-text-muted">
+            Each push saves a new milestone. Nothing is overwritten — open, fork or restore any version.
+          </p>
+        </div>
+        {canPush && (
+          <Button className="w-full sm:w-auto" aria-expanded={showPush} onClick={() => setShowPush((v) => !v)}>
+            {showPush ? "Close" : "+ Push milestone"}
+          </Button>
+        )}
+      </div>
 
-      <Card className="mt-4 p-4" >
+      <Card className="mt-5 p-5">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <div>
             <p className="text-xs font-medium text-text-muted">Languages</p>
@@ -1308,7 +1518,7 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
             <p className="mt-0.5 text-sm">{data.summary.last_push ? new Date(data.summary.last_push).toLocaleDateString() : "—"}</p>
           </div>
           <div className="ml-auto flex flex-wrap gap-2">
-            <PublishToggle projectId={data.project.id} />
+            {canManage && <PublishToggle projectId={data.project.id} initialPublic={data.project.visibility === "public"} onChanged={load} />}
             <CopyButton text={`${window.location.origin}/projects/${data.project.id}`} label="Copy project link" />
             {selected && <CopyButton text={`${window.location.origin}/projects/${data.project.id}/milestones/${selected}`} label="Copy milestone link" />}
           </div>
@@ -1318,14 +1528,12 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
         </p>
       </Card>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button aria-expanded={showPush} onClick={() => setShowPush((v) => !v)}>
-          {showPush ? "Close" : "+ Push milestone"}
-        </Button>
-        <span className="text-sm text-text-muted">Saves a new scanned version — History below is never overwritten.</span>
-      </div>
-      {showPush && (
-        <UploadBox projectId={projectId} onDone={() => { setShowPush(false); void load(); }} onCancel={() => setShowPush(false)} />
+      {canPush && showPush && (
+        <UploadBox
+          projectId={projectId}
+          onDone={(mid) => { setShowPush(() => false); void load().then(() => { if (mid) setSelected(mid); }); }}
+          onCancel={() => setShowPush(() => false)}
+        />
       )}
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -1388,7 +1596,7 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
         </div>
         <div>
           {selected
-            ? <MilestoneDetail milestoneId={selected} projectId={projectId} onChanged={load} />
+            ? <MilestoneDetail milestoneId={selected} projectId={projectId} canPush={canPush} onChanged={load} />
             : <EmptyState title="Pick a milestone" hint="Its files, findings and screenshots appear here." />}
         </div>
       </div>
@@ -1396,8 +1604,10 @@ function ProjectDetail({ projectId, milestoneId, go }: { projectId: string; mile
   );
 }
 
-function PublishToggle({ projectId }: { projectId: string }) {
-  const [isPublic, setIsPublic] = useState(false);
+function PublishToggle({ projectId, initialPublic, onChanged }: { projectId: string; initialPublic: boolean; onChanged: () => void }) {
+  // Starts from the project's real visibility (it always said "Publish" before).
+  const [isPublic, setIsPublic] = useState(initialPublic);
+  useEffect(() => setIsPublic(initialPublic), [initialPublic]);
   const toast = useToast();
   return (
     <Button
@@ -1409,6 +1619,7 @@ function PublishToggle({ projectId }: { projectId: string }) {
         try {
           await api.setVisibility(projectId, next);
           setIsPublic(!isPublic);
+          onChanged();
           toast.success(next === "public" ? "Published to the Marketplace." : "Made private to the space.");
         } catch (err) { toast.error(err instanceof Error ? err.message : "Only a Space Owner can publish."); }
       }}
@@ -1418,36 +1629,68 @@ function PublishToggle({ projectId }: { projectId: string }) {
   );
 }
 
-function UploadBox({ projectId, onDone, onCancel }: { projectId: string; onDone: () => void; onCancel: () => void }) {
+function UploadBox({ projectId, onDone, onCancel }: { projectId: string; onDone: (milestoneId?: string) => void; onCancel: () => void }) {
   const [label, setLabel] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const toast = useToast();
+
+  const pick = (f: File | undefined | null) => {
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith(".zip")) { toast.error("That is not a .zip file."); return; }
+    setFile(f);
+  };
+
   return (
     <form
-      className="vf-page mt-4 rounded-lg border border-dashed border-border bg-surface p-5 shadow-surface"
+      className="vf-page mt-5 rounded-lg border border-border bg-surface p-5 shadow-surface"
       onSubmit={async (e) => {
         e.preventDefault();
-        const file = e.currentTarget.querySelector<HTMLInputElement>("input[type=file]")?.files?.[0];
         if (!file) { toast.error("Choose a .zip of the project first."); return; }
         setBusy(true);
         try {
-          const r = (await api.pushZip(projectId, file, label)) as { findings: number };
-          toast.success(`Milestone saved. Scan found ${r.findings} thing(s) to look at.`);
+          const r = await api.pushZip(projectId, file, label);
+          if (r.blocked) toast.error(r.message ?? "Saved, but your admin's policy flags findings at this severity.");
+          else toast.success(`Milestone #${r.seq_no ?? ""} saved · ${r.findings} finding${r.findings === 1 ? "" : "s"} to review.`);
           setLabel("");
-          onDone();
+          setFile(null);
+          onDone(r.milestone_id);
         } catch (err) { toast.error(err instanceof Error ? err.message : "Upload failed."); }
         finally { setBusy(false); }
       }}
     >
-      <Label>Push a milestone (.zip)</Label>
-      <p className="mt-0.5 text-sm text-text-muted">
-        We check the zip safely (no zip bombs), then scan for passwords in code, risky patterns, unused libraries, and known library problems.
-      </p>
+      <div className="flex items-start gap-3">
+        <div>
+          <p className="font-semibold">Push a milestone</p>
+          <p className="mt-0.5 text-sm text-text-muted">Checked for zip bombs, then scanned for leaked keys, risky code, unused and vulnerable libraries.</p>
+        </div>
+        <span className="ml-auto"><Button type="button" variant="ghost" size="sm" onClick={onCancel}>Cancel</Button></span>
+      </div>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files?.[0]); }}
+        className={`mt-4 flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+          drag ? "border-primary bg-primary/5" : file ? "border-success/50 bg-success/5" : "border-border hover:border-primary/50 hover:bg-primary/[0.03]"
+        }`}
+      >
+        <span aria-hidden className={`flex h-10 w-10 items-center justify-center rounded-full ${file ? "bg-success/15 text-success" : "bg-primary/10 text-primary"}`}>
+          {file ? "✓" : <IconUploadCloud />}
+        </span>
+        {file ? (
+          <span className="text-sm"><strong>{file.name}</strong> <span className="text-text-muted">· {(file.size / 1024 / 1024).toFixed(2)} MB · click to change</span></span>
+        ) : (
+          <span className="text-sm"><strong className="text-primary">Choose a .zip</strong> <span className="text-text-muted">or drag it here</span></span>
+        )}
+      </button>
+      <input ref={inputRef} type="file" accept=".zip,application/zip" aria-label="Project zip" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Input type="file" accept=".zip" aria-label="Project zip" className="w-auto" />
         <span className="min-w-48 flex-1"><Input placeholder="What changed? e.g. Login page works" value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Milestone label" /></span>
-        <Button type="submit" busy={busy}>{busy ? "Scanning…" : "Save milestone"}</Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" busy={busy} disabled={!file}>{busy ? "Scanning…" : "Save milestone"}</Button>
       </div>
     </form>
   );
@@ -1455,7 +1698,7 @@ function UploadBox({ projectId, onDone, onCancel }: { projectId: string; onDone:
 
 type MileData = Awaited<ReturnType<typeof api.milestone>>;
 
-function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: string; projectId: string; onChanged: () => void }) {
+function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { milestoneId: string; projectId: string; canPush: boolean; onChanged: () => void }) {
   const [tab, setTab] = useState("findings");
   const [data, setData] = useState<MileData | null>(null);
   const [openFile, setOpenFile] = useState<{ path: string; text: string } | null>(null);
@@ -1463,14 +1706,19 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
   const [forkTo, setForkTo] = useState("");
   const [forking, setForking] = useState(false);
   const [shotBusy, setShotBusy] = useState(false);
+  const [fixing, setFixing] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState("");
   const toast = useToast();
 
   const load = useCallback(async () => {
-    try { setData(await api.milestone(milestoneId)); } catch { setData(null); }
+    setLoadError("");
+    try { setData(await api.milestone(milestoneId)); }
+    catch (e) { setData(null); setLoadError(e instanceof Error ? e.message : "Could not load this milestone."); }
   }, [milestoneId]);
   useEffect(() => { void load(); setOpenFile(null); setTab("findings"); }, [load]);
   useEffect(() => { void api.myProjects().then(setMyProjects).catch(() => {}); }, []);
 
+  if (!data && loadError) return <Alert>{loadError}</Alert>;
   if (!data) return <div className="space-y-2"><Skeleton className="h-10" /><Skeleton className="h-32" /></div>;
   const open = data.findings.filter((f) => f.status === "open");
   const shots = data.milestone.screenshots ?? [];
@@ -1535,19 +1783,26 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
                     )}
                     <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-background p-3 text-xs">{f.fix_text}</pre>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {f.kind === "cve" && f.fixed_version && (
-                        <Button size="sm" onClick={async () => {
+                      {canPush && f.kind === "cve" && f.fixed_version && (
+                        <Button size="sm" busy={fixing === f.id} onClick={async () => {
+                          setFixing(f.id);
                           try {
                             const r = await api.applyFix(f.id);
                             toast.success(`Auto-fix pushed as a new milestone (${r.milestone_id.slice(0, 12)}…). Re-check its findings.`);
                             onChanged();
                           } catch (err) { toast.error(err instanceof Error ? err.message : "Auto-fix failed."); }
+                          finally { setFixing(null); }
                         }}>Apply fix automatically</Button>
                       )}
                       <CopyButton text={f.fix_text} label="Copy fix" />
-                      <Button variant="ghost" size="sm" onClick={async () => { await api.ignoreFinding(f.id); await load(); toast.info("Marked as not a problem."); }}>
-                        Not a problem
-                      </Button>
+                      {canPush && (
+                        <Button variant="ghost" size="sm" onClick={async () => {
+                          try { await api.ignoreFinding(f.id); await load(); onChanged(); toast.info("Marked as not a problem."); }
+                          catch (err) { toast.error(err instanceof Error ? err.message : "Could not dismiss this finding."); }
+                        }}>
+                          Not a problem
+                        </Button>
+                      )}
                     </div>
                     <p className="mt-2 text-xs text-text-muted">Apply the fix in your AI tool, then push again — the new milestone should show this gone.</p>
                   </Card>
@@ -1610,12 +1865,12 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
 
         {tab === "shots" && (
           <Card className="p-4">
-            <p className="text-sm text-text-muted">Base a milestone on how it looks. Attach a screenshot — History keeps it with this milestone.</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {shots.map((k) => <Badge key={k}>{k.split("/").pop()}</Badge>)}
-              {shots.length === 0 && <span className="text-sm text-text-muted">No screenshots yet.</span>}
+            <p className="text-sm text-text-muted">Remember how this milestone looked. Screenshots stay with this version in History.</p>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {shots.map((k) => <ShotThumb key={k} blobKey={k} />)}
             </div>
-            <form className="mt-4 flex flex-wrap gap-2" onSubmit={async (e) => {
+            {shots.length === 0 && <p className="mt-3 text-sm text-text-muted">No screenshots yet.</p>}
+            {canPush && <form className="mt-4 flex flex-wrap gap-2" onSubmit={async (e) => {
               e.preventDefault();
               const file = e.currentTarget.querySelector<HTMLInputElement>("input[type=file]")?.files?.[0];
               if (!file) { toast.error("Choose an image first."); return; }
@@ -1626,13 +1881,13 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
             }}>
               <Input type="file" accept="image/*" aria-label="Screenshot image" className="w-auto" />
               <Button type="submit" busy={shotBusy}>Attach screenshot</Button>
-            </form>
+            </form>}
           </Card>
         )}
       </div>
 
-      <Card className="mt-6 p-4">
-        <p className="font-medium">Fork this milestone</p>
+      {canPush && myProjects.some((p) => p.id !== projectId) && <Card className="mt-6 p-5">
+        <p className="font-semibold">Fork this milestone</p>
         <p className="mt-0.5 text-sm text-text-muted">Copies this exact version into another project so you can try a different direction without losing this one.</p>
         <form className="mt-3 flex flex-wrap gap-2" onSubmit={async (e) => {
           e.preventDefault();
@@ -1648,8 +1903,28 @@ function MilestoneDetail({ milestoneId, projectId, onChanged }: { milestoneId: s
           </Select>
           <Button type="submit" busy={forking}>Fork</Button>
         </form>
-      </Card>
+      </Card>}
     </div>
+  );
+}
+
+/** Screenshot preview, fetched with the session token (an <img src> can't send it). */
+function ShotThumb({ blobKey }: { blobKey: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    let made: string | null = null;
+    void api.blobUrl(blobKey).then((u) => { made = u; if (live) setUrl(u); });
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [blobKey]);
+  const name = blobKey.split("/").pop()?.replace(/^[0-9a-f]{64}-/, "") ?? "screenshot";
+  return (
+    <a href={url ?? undefined} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded-md border border-border bg-background">
+      {url
+        ? <img src={url} alt={name} className="aspect-video w-full object-cover transition-transform duration-normal group-hover:scale-[1.02]" />
+        : <Skeleton className="aspect-video w-full rounded-none" />}
+      <span className="block truncate px-2 py-1.5 text-xs text-text-muted">{name}</span>
+    </a>
   );
 }
 
@@ -1790,7 +2065,10 @@ function Profile() {
                 <Badge tone={t.revoked ? "danger" : "success"}>{t.revoked ? "revoked" : t.scopes.join(", ")}</Badge>
                 {!t.revoked && (
                   <span className="ml-auto">
-                    <Button variant="ghost" size="sm" onClick={async () => { await api.revokeToken(t.id); await load(); toast.info("Token revoked."); }}>
+                    <Button variant="ghost" size="sm" onClick={async () => {
+                      try { await api.revokeToken(t.id); await load(); toast.info("Token revoked."); }
+                      catch (err) { toast.error(err instanceof Error ? err.message : "Could not revoke the token."); }
+                    }}>
                       Revoke
                     </Button>
                   </span>
@@ -1807,40 +2085,60 @@ function Profile() {
 
 function MfaCard() {
   const [secret, setSecret] = useState("");
+  const [uri, setUri] = useState("");
   const [code, setCode] = useState("");
-  const [enabled, setEnabled] = useState(false);
+  const [offCode, setOffCode] = useState("");
+  // Real state from the server (the card used to always start as "off").
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
   const toast = useToast();
+  useEffect(() => { void api.me().then((m) => setEnabled(!!m.mfa_enabled)).catch(() => setEnabled(false)); }, []);
   return (
     <Card className="p-5">
-      <h3 className="font-serif text-lg font-bold">Two-factor authentication (MFA)</h3>
-      <p className="mt-1 text-sm text-text-muted">Add an authenticator app (TOTP). After enabling, sign-in asks for the 6-digit code.</p>
-      {!secret && !enabled && (
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-lg font-bold tracking-tight">Two-factor authentication</h3>
+        {enabled === true && <Badge tone="success">On</Badge>}
+        {enabled === false && <Badge>Off</Badge>}
+      </div>
+      <p className="mt-1 text-sm text-text-muted">Add an authenticator app (TOTP). Sign-in then asks for a 6-digit code.</p>
+      {enabled === null && <Skeleton className="mt-3 h-10 w-48" />}
+      {enabled === false && !secret && (
         <div className="mt-3">
-          <Button onClick={async () => {
-            try { const r = await api.mfaSetup(); setSecret(r.secret); }
+          <Button busy={busy} onClick={async () => {
+            setBusy(true);
+            try { const r = await api.mfaSetup(); setSecret(r.secret); setUri(r.otpauth_uri); }
             catch (err) { toast.error(err instanceof Error ? err.message : "Setup failed."); }
+            finally { setBusy(false); }
           }}>Set up authenticator</Button>
         </div>
       )}
-      {secret && !enabled && (
+      {enabled === false && secret && (
         <div className="mt-3 space-y-3">
-          <p className="text-sm">Add this secret to your authenticator app, then enter a code:</p>
-          <code className="block break-all rounded-md bg-background p-2 text-sm">{secret}</code>
+          <p className="text-sm">Add this key to your authenticator app (or open the link on your phone), then enter a code:</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="break-all rounded-md bg-background px-2.5 py-1.5 text-sm">{secret}</code>
+            <CopyButton text={secret} label="Copy key" />
+            {uri && <a href={uri} className="text-sm font-semibold text-primary hover:underline">Open in app</a>}
+          </div>
           <form className="flex max-w-sm gap-2" onSubmit={async (e) => {
             e.preventDefault();
-            try { await api.mfaEnable(code); setEnabled(true); toast.success("MFA is on."); }
+            try { await api.mfaEnable(code); setEnabled(true); setSecret(""); setCode(""); toast.success("Two-factor authentication is on."); }
             catch (err) { toast.error(err instanceof Error ? err.message : "That code did not match."); }
           }}>
-            <Input inputMode="numeric" placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} required aria-label="Authenticator code" />
-            <Button type="submit">Enable MFA</Button>
+            <Input inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} required aria-label="Authenticator code" />
+            <Button type="submit">Turn on</Button>
           </form>
         </div>
       )}
-      {enabled && (
-        <div className="mt-3 flex items-center gap-2">
-          <Badge tone="success">MFA on</Badge>
-          <Button variant="ghost" size="sm" onClick={async () => { await api.mfaDisable(); setEnabled(false); setSecret(""); toast.info("MFA turned off."); }}>Turn off</Button>
-        </div>
+      {enabled === true && (
+        <form className="mt-3 flex max-w-sm gap-2" onSubmit={async (e) => {
+          e.preventDefault();
+          try { await api.mfaDisable(offCode); setEnabled(false); setOffCode(""); toast.info("Two-factor authentication turned off."); }
+          catch (err) { toast.error(err instanceof Error ? err.message : "That code did not match."); }
+        }}>
+          <Input inputMode="numeric" autoComplete="one-time-code" placeholder="Current code to turn off" value={offCode} onChange={(e) => setOffCode(e.target.value)} required aria-label="Current authenticator code" />
+          <Button type="submit" variant="secondary">Turn off</Button>
+        </form>
       )}
     </Card>
   );
@@ -1861,7 +2159,7 @@ function AccountDataCard() {
       </div>
       <form className="mt-4 flex max-w-md gap-2" onSubmit={async (e) => {
         e.preventDefault();
-        try { await api.deleteMe(password); setToken(null); location.href = "/"; }
+        try { await api.deleteMe(password); await signOutEverywhere(); location.href = "/"; }
         catch (err) { toast.error(err instanceof Error ? err.message : "Delete failed — check your password."); }
       }}>
         <Input type="password" placeholder="Password to confirm delete" value={password} onChange={(e) => setPassword(e.target.value)} required aria-label="Password" />
@@ -1919,7 +2217,8 @@ function Marketplace({ go }: { go: (v: View) => void }) {
 
 // ------------------------------------------------------------------- admin
 
-function Admin({ initialTab, go, onCountsUpdate }: {
+function Admin({ initialTab, go, onCountsUpdate, meId }: {
+  meId: string;
   initialTab: string;
   go?: (v: View) => void;
   onCountsUpdate?: (counts: { vulns?: number; users?: number; groups?: number }) => void;
@@ -1945,6 +2244,12 @@ function Admin({ initialTab, go, onCountsUpdate }: {
   }, [onCountsUpdate]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
+
+  /** Run an admin action; show the server's error as a toast instead of failing silently. */
+  const act = async (fn: () => Promise<unknown>, ok: string, reload = false) => {
+    try { await fn(); if (reload) await load(); toast.success(ok); }
+    catch (err) { toast.error(err instanceof Error ? err.message : "That did not work."); }
+  };
 
   const selectTab = (nextTab: string) => {
     setTab(nextTab);
@@ -1974,8 +2279,8 @@ function Admin({ initialTab, go, onCountsUpdate }: {
         </h2>
         <p className="mt-1 text-sm text-text-muted">
           {tab === "vulns" && `${vulns?.total_open ?? 0} open (${vulns?.critical ?? 0} fix-now) across every project. Contact leaves a to-do on their latest milestone.`}
-          {tab === "people" && `${users.length} people. Block stops all sign-ins and pushes instantly.`}
-          {tab === "groups" && `${groups.length} groups. Give a group a role in a space and every member inherits it.`}
+          {tab === "people" && `${users.length} ${users.length === 1 ? "person" : "people"}. Block stops all sign-ins and pushes instantly.`}
+          {tab === "groups" && `${groups.length} group${groups.length === 1 ? "" : "s"}. Give a group a role in a space and every member inherits it.`}
           {isSettingsTab && activeSettingsSubTab === "upload" && "Decompression safeguards, zip-bomb defense ratios, ClamAV antivirus daemon, and OSV vulnerability lookups."}
           {isSettingsTab && activeSettingsSubTab === "access" && "Web browser session duration, personal API access token quotas, and open user self-registration."}
           {isSettingsTab && activeSettingsSubTab === "policy" && "Push security gates, software license blocklists (SPDX), vulnerability remediation SLAs, and space resource quotas."}
@@ -2007,9 +2312,7 @@ function Admin({ initialTab, go, onCountsUpdate }: {
       <div role="region" aria-label="Settings panel content" className="mt-6">
         {tab === "vulns" && (
           <div>
-            {vulns
-              ? <p className="text-sm text-text-muted">{vulns.total_open} open ({vulns.critical} fix-now) across every project. Contact leaves a to-do on their latest milestone.</p>
-              : <div className="space-y-2"><Skeleton className="h-12" /><Skeleton className="h-12" /></div>}
+            {!vulns && <div className="space-y-2"><Skeleton className="h-12" /><Skeleton className="h-12" /></div>}
             {vulns && vulns.rows.length > 0 && (
               <div className="mt-3 divide-y divide-border rounded-lg border border-border bg-surface shadow-surface">
                 {vulns.rows.map((r) => (
@@ -2017,14 +2320,18 @@ function Admin({ initialTab, go, onCountsUpdate }: {
                     <Badge tone={sevTone(r.severity)}>{SEV_WORD[r.severity] ?? r.severity}</Badge>
                     <span className="font-medium">{r.title}</span>
                     <span className="text-text-muted">in {r.project} · {r.owner}</span>
-                    <span className="ml-auto flex gap-1">
-                      <Button variant="ghost" size="sm" onClick={async () => { await api.adminNudge(r.owner_id, `Please fix: ${r.title}`); toast.success("Message left on their latest milestone."); }}>
-                        Contact member
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={async () => { await api.adminBlock(r.owner_id, "Security fix required"); await load(); toast.info("Member blocked until unblocked."); }}>
-                        Block
-                      </Button>
-                    </span>
+                    {r.owner_id !== "deleted-user" && (
+                      <span className="ml-auto flex gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => void act(() => api.adminNudge(r.owner_id, `Please fix: ${r.title}`), "Message left on their latest milestone.")}>
+                          Contact member
+                        </Button>
+                        {r.owner_id !== meId && (
+                          <Button variant="ghost" size="sm" onClick={() => void act(() => api.adminBlock(r.owner_id, "Security fix required"), "Member blocked until unblocked.", true)}>
+                            Block
+                          </Button>
+                        )}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2036,7 +2343,6 @@ function Admin({ initialTab, go, onCountsUpdate }: {
         {tab === "people" && (
           <div>
             <div className="flex items-center gap-2">
-              <p className="text-sm text-text-muted">{users.length} people. Block stops all sign-ins and pushes instantly.</p>
               <span className="ml-auto"><Button onClick={() => setShowCreateUser(true)}>+ Create user</Button></span>
             </div>
             {users.length > 0 ? (
@@ -2049,10 +2355,10 @@ function Admin({ initialTab, go, onCountsUpdate }: {
                     {u.is_platform_admin && <Badge tone="primary">Admin</Badge>}
                     {u.is_blocked && <Badge tone="danger">Blocked</Badge>}
                     <span className="ml-auto flex gap-1">
-                      {u.is_blocked
-                        ? <Button variant="ghost" size="sm" onClick={async () => { await api.adminUnblock(u.id); await load(); toast.success("Member unblocked."); }}>Unblock</Button>
-                        : <Button variant="ghost" size="sm" onClick={async () => { await api.adminBlock(u.id, "Blocked by admin"); await load(); toast.info("Member blocked."); }}>Block</Button>}
-                      <Button variant="ghost" size="sm" onClick={async () => { await api.adminNudge(u.id, "Hello from your admin — please check your project findings."); toast.success("Message left on their latest milestone."); }}>Contact</Button>
+                      {u.id === meId ? <Badge>You</Badge> : u.is_blocked
+                        ? <Button variant="ghost" size="sm" onClick={() => void act(() => api.adminUnblock(u.id), "Member unblocked.", true)}>Unblock</Button>
+                        : <Button variant="ghost" size="sm" onClick={() => void act(() => api.adminBlock(u.id, "Blocked by admin"), "Member blocked.", true)}>Block</Button>}
+                      {u.id !== meId && <Button variant="ghost" size="sm" onClick={() => void act(() => api.adminNudge(u.id, "Hello from your admin — please check your project findings."), "Message left on their latest milestone.")}>Contact</Button>}
                     </span>
                   </li>
                 ))}
@@ -2091,7 +2397,6 @@ function Admin({ initialTab, go, onCountsUpdate }: {
         {tab === "groups" && (
           <div>
             <div className="flex items-center gap-2">
-              <p className="text-sm text-text-muted">{groups.length} groups. Give a group a role in a space and every member inherits it.</p>
               <span className="ml-auto"><Button onClick={() => setShowCreateGroup(true)}>+ Create group</Button></span>
             </div>
             {groups.length > 0 ? (

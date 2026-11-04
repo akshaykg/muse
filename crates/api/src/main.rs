@@ -51,6 +51,11 @@ pub struct AppState {
 
 type Shared = Arc<AppState>;
 
+/// Hard ceiling for a milestone upload body; the admin setting is checked inside the handler.
+const UPLOAD_BODY_CAP: usize = 2 * 1024 * 1024 * 1024;
+/// Screenshots are capped at 10 MB in the handler; leave a little headroom here.
+const SCREENSHOT_BODY_CAP: usize = 11 * 1024 * 1024;
+
 fn now() -> String {
     Utc::now().to_rfc3339()
 }
@@ -120,6 +125,21 @@ fn totp_valid(secret_b32: &str, code: &str) -> bool {
     [-30i64, 0, 30].iter().any(|step| {
         totp_code(secret_b32, (now_s as i64 + step).max(0) as u64) == code.trim()
     })
+}
+
+/// Cryptographically random bytes from the OS RNG.
+fn rand_bytes<const N: usize>() -> [u8; N] {
+    use rand_core::RngCore;
+    let mut out = [0u8; N];
+    OsRng.fill_bytes(&mut out);
+    out
+}
+
+/// Compare secrets without leaking how many leading bytes matched.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() { return false; }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn make_refresh_token() -> String {
@@ -212,7 +232,7 @@ fn seal_secret(state: &Shared, plain: &str) -> String {
     let key_raw = hex::decode(&key_bytes).unwrap_or_default();
     let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_raw[..32]);
     let cipher = Aes256Gcm::new(key);
-    let nonce_bytes: [u8; 12] = uuid::Uuid::new_v4().as_bytes()[..12].try_into().unwrap();
+    let nonce_bytes: [u8; 12] = rand_bytes::<12>();
     match cipher.encrypt(Nonce::from_slice(&nonce_bytes), plain.as_bytes()) {
         Ok(ct) => format!("enc:v1:{}:{}", hex::encode(nonce_bytes), hex::encode(ct)),
         Err(_) => plain.to_string(),
@@ -243,10 +263,8 @@ fn signing_keypair(state: &Shared) -> (String, String) {
         let raw = hex::decode(text.trim()).unwrap_or_default();
         raw.try_into().unwrap_or([0u8; 32])
     } else {
-        let raw = *uuid::Uuid::new_v4().as_bytes();
-        let mut seed = [0u8; 32];
-        seed[..16].copy_from_slice(&raw);
-        seed[16..].copy_from_slice(&raw);
+        // Full 256-bit seed (it used to be one UUID repeated twice).
+        let seed = rand_bytes::<32>();
         let _ = std::fs::write(&path, hex::encode(seed));
         seed
     };
@@ -291,8 +309,12 @@ async fn send_email(state: &Shared, to: &str, subject: &str, body_text: &str) ->
 async fn persist(state: &Shared) {
     let store = state.store.read().await;
     let path = state.data_dir.join("db.json");
-    if let Ok(text) = serde_json::to_string(&*store) {
-        let _ = tokio::fs::write(&path, text).await;
+    let Ok(text) = serde_json::to_string(&*store) else { return };
+    // Write a sibling file then rename: a crash mid-write can never leave a
+    // half-written db.json behind (which would reseed on next boot).
+    let tmp = state.data_dir.join(format!("db.json.{}.tmp", uuid::Uuid::new_v4().simple()));
+    if tokio::fs::write(&tmp, text).await.is_ok() && tokio::fs::rename(&tmp, &path).await.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await;
     }
 }
 
@@ -387,8 +409,44 @@ fn space_role(store: &Store, user: &User, space_id: &str) -> Option<SpaceRole> {
 
 fn can_read_project(store: &Store, user: &User, project_id: &str) -> Option<Project> {
     let p = store.projects.get(project_id)?.clone();
+    // Marketplace projects are readable by any signed-in user; the Marketplace
+    // "View project" button used to land on a 404 for non-members.
+    if p.visibility == "public" { return Some(p); }
     space_role(store, user, &p.space_id)?;
     Some(p)
+}
+
+/// Id of each project's newest milestone. Health numbers count only these:
+/// summing every milestone counted an issue once per push forever, so a
+/// project that had fixed everything still showed "N to fix".
+fn latest_milestones(store: &Store) -> HashMap<String, String> {
+    let mut best: HashMap<String, (u32, String)> = HashMap::new();
+    for m in store.milestones.values() {
+        let e = best.entry(m.project_id.clone()).or_insert((0, String::new()));
+        if m.seq_no >= e.0 { *e = (m.seq_no, m.id.clone()); }
+    }
+    best.into_iter().map(|(p, (_, id))| (p, id)).collect()
+}
+
+/// Open findings on the newest milestone of a project.
+fn current_findings<'a>(store: &'a Store, latest: &HashMap<String, String>, project_id: &str) -> Vec<&'a Finding> {
+    let Some(mid) = latest.get(project_id) else { return Vec::new() };
+    store.findings.values().filter(|f| &f.milestone_id == mid && f.status == "open").collect()
+}
+
+/// Severity order for sorting: most urgent first.
+fn severity_rank(sev: &str) -> u8 {
+    match sev { "critical" => 0, "high" => 1, "medium" => 2, "low" => 3, _ => 4 }
+}
+
+/// Keep only characters that are safe inside a blob key / file name.
+fn safe_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = base.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let cleaned = cleaned.trim_matches('.').to_string();
+    if cleaned.is_empty() { "screenshot.png".into() } else { cleaned.chars().take(80).collect() }
 }
 
 #[derive(Deserialize)]
@@ -396,8 +454,10 @@ struct LoginBody { email: String, password: String, #[serde(default)] totp_code:
 
 async fn login(State(state): State<Shared>, headers: HeaderMap, Json(body): Json<LoginBody>) -> Response {
     // Rate limit: 10 failed attempts per email+IP in 15 minutes.
-    let ip = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).unwrap_or("local").to_string();
-    let limit_key = format!("{}|{ip}", body.email.to_lowercase());
+    // Keyed on the account, not X-Forwarded-For: that header is client-controlled,
+    // so rotating it used to reset the counter and allow unlimited guesses.
+    let _ = &headers;
+    let limit_key = body.email.trim().to_lowercase();
     {
         let fails = state.login_fails.read().await;
         let recent = fails.get(&limit_key).map(|v| v.iter().filter(|t| t.elapsed() < std::time::Duration::from_secs(900)).count()).unwrap_or(0);
@@ -415,13 +475,13 @@ async fn login(State(state): State<Shared>, headers: HeaderMap, Json(body): Json
         fail(state.clone(), limit_key).await;
         return err(StatusCode::UNAUTHORIZED, "Wrong email or password.");
     };
-    if user.is_blocked {
-        return err(StatusCode::FORBIDDEN, "This account is blocked. Contact your admin.");
-    }
     if !verify_password(&body.password, &user.password_hash) {
         fail(state.clone(), limit_key).await;
         audit(&state, &user.id, "auth:login", "user", &user.id, "failure").await;
         return err(StatusCode::UNAUTHORIZED, "Wrong email or password.");
+    }
+    if user.is_blocked {
+        return err(StatusCode::FORBIDDEN, "This account is blocked. Contact your admin.");
     }
     if user.mfa_enabled {
         let ok = match (&user.mfa_secret, &body.totp_code) {
@@ -429,6 +489,7 @@ async fn login(State(state): State<Shared>, headers: HeaderMap, Json(body): Json
             _ => false,
         };
         if !ok {
+            if body.totp_code.is_some() { fail(state.clone(), limit_key).await; }
             return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
                 "error": "Enter the 6-digit code from your authenticator app.", "mfa_required": true
             }))).into_response();
@@ -464,8 +525,13 @@ async fn refresh(State(state): State<Shared>, Json(body): Json<RefreshBody>) -> 
     if rt.expires_at.as_str() < now().as_str() {
         return err(StatusCode::UNAUTHORIZED, "Refresh token expired. Sign in again.");
     }
-    rt.revoked_at = Some(now());
     let user_id = rt.user_id.clone();
+    if store.users.get(&user_id).map(|u| u.is_blocked).unwrap_or(true) {
+        return err(StatusCode::FORBIDDEN, "This account is blocked or no longer exists.");
+    }
+    if let Some(rt) = store.refresh_tokens.iter_mut().find(|t| t.token_hash == hashed && t.revoked_at.is_none()) {
+        rt.revoked_at = Some(now());
+    }
     let refresh_raw = make_refresh_token();
     store.refresh_tokens.push(RefreshToken {
         id: new_id("rft"), user_id: user_id.clone(), token_hash: hash_token(&refresh_raw),
@@ -553,7 +619,12 @@ async fn reset_password(State(state): State<Shared>, Json(body): Json<ResetBody>
 // MFA (TOTP authenticator apps)
 async fn mfa_setup(State(state): State<Shared>, headers: HeaderMap) -> Response {
     let a = auth!(&state, &headers);
-    let secret = base32_encode(uuid::Uuid::new_v4().as_bytes());
+    if a.0.mfa_enabled {
+        // Re-running setup used to replace the live secret while MFA stayed on,
+        // so the user's authenticator stopped matching and they were locked out.
+        return err(StatusCode::CONFLICT, "MFA is already on. Turn it off first to set up a new authenticator.");
+    }
+    let secret = base32_encode(&rand_bytes::<20>());
     let mut store = state.store.write().await;
     if let Some(u) = store.users.get_mut(&a.0.id) { u.mfa_secret = Some(secret.clone()); }
     drop(store);
@@ -583,12 +654,21 @@ async fn mfa_enable(State(state): State<Shared>, headers: HeaderMap, Json(body):
     Json(serde_json::json!({ "ok": true, "mfa_enabled": true })).into_response()
 }
 
-async fn mfa_disable(State(state): State<Shared>, headers: HeaderMap) -> Response {
+async fn mfa_disable(State(state): State<Shared>, headers: HeaderMap, body: Option<Json<MfaCodeBody>>) -> Response {
     let a = auth!(&state, &headers);
+    if a.0.mfa_enabled {
+        // A stolen session alone must not be enough to strip the second factor.
+        let ok = match (&a.0.mfa_secret, body.as_ref()) {
+            (Some(secret), Some(Json(b))) => totp_valid(secret, &b.code),
+            _ => false,
+        };
+        if !ok { return err(StatusCode::BAD_REQUEST, "Enter a current 6-digit code from your authenticator to turn MFA off."); }
+    }
     let mut store = state.store.write().await;
     if let Some(u) = store.users.get_mut(&a.0.id) { u.mfa_enabled = false; u.mfa_secret = None; }
     drop(store);
     persist(&state).await;
+    audit(&state, &a.0.id, "auth:mfa_disable", "user", &a.0.id, "success").await;
     Json(serde_json::json!({ "ok": true, "mfa_enabled": false })).into_response()
 }
 
@@ -612,9 +692,10 @@ async fn oidc_login(State(state): State<Shared>) -> Response {
 }
 
 fn urlencoding(s: &str) -> String {
-    s.chars().map(|c| match c {
-        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-        _ => format!("%{:02X}", c as u32),
+    // Percent-encode UTF-8 bytes (encoding the char code broke non-ASCII URLs).
+    s.bytes().map(|b| match b {
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+        _ => format!("%{b:02X}"),
     }).collect()
 }
 
@@ -666,8 +747,16 @@ async fn oidc_callback(State(state): State<Shared>, Query(q): Query<OidcCallback
     }
     // Link or provision the local account.
     let mut store = state.store.write().await;
-    let existing = store.users.values().find(|u| u.oidc_subject.as_deref() == Some(sub) || u.email.eq_ignore_ascii_case(email))
+    // Linking an existing account by email is only safe when the identity
+    // provider says it verified that email; otherwise anyone who can set an
+    // unverified email at the IdP could take over a local (even admin) account.
+    let email_verified = claims["email_verified"].as_bool().unwrap_or(false);
+    let existing = store.users.values().find(|u| u.oidc_subject.as_deref() == Some(sub))
+        .or_else(|| if email_verified { store.users.values().find(|u| u.email.eq_ignore_ascii_case(email)) } else { None })
         .map(|u| u.id.clone());
+    if existing.is_none() && store.users.values().any(|u| u.email.eq_ignore_ascii_case(email)) {
+        return err(StatusCode::FORBIDDEN, "An account with that email already exists. Your identity provider must mark the email as verified before it can be linked.");
+    }
     let user_id = match existing {
         Some(id) => {
             if let Some(u) = store.users.get_mut(&id) { u.oidc_subject = Some(sub.to_string()); }
@@ -689,7 +778,7 @@ async fn oidc_callback(State(state): State<Shared>, Query(q): Query<OidcCallback
             id
         }
     };
-    let user = store.users.get(&user_id).cloned().unwrap();
+    let Some(user) = store.users.get(&user_id).cloned() else { return err(StatusCode::INTERNAL_SERVER_ERROR, "Account lookup failed."); };
     drop(store);
     persist(&state).await;
     if user.is_blocked { return err(StatusCode::FORBIDDEN, "This account is blocked."); }
@@ -712,7 +801,7 @@ fn scim_authorized(state: &Shared, state_settings: &Settings, headers: &HeaderMa
     let expected = open_secret(state, &state_settings.scim_token);
     headers.get("authorization").and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|t| t == expected).unwrap_or(false)
+        .map(|t| constant_time_eq(t, &expected)).unwrap_or(false)
 }
 
 async fn scim_create_user(State(state): State<Shared>, headers: HeaderMap, Json(body): Json<serde_json::Value>) -> Response {
@@ -767,6 +856,7 @@ async fn me(State(state): State<Shared>, headers: HeaderMap) -> Response {
     spaces.sort_by(|x, y| x["name"].as_str().cmp(&y["name"].as_str()));
     Json(serde_json::json!({
         "user": PublicUser::from(&a.0), "spaces": spaces,
+        "mfa_enabled": a.0.mfa_enabled,
         "skill_url": "/skill/SKILL.md"
     })).into_response()
 }
@@ -847,12 +937,12 @@ struct CreateSpaceBody { name: String }
 async fn list_spaces(State(state): State<Shared>, headers: HeaderMap) -> Response {
     let a = auth!(&state, &headers);
     let store = state.store.read().await;
+    let latest = latest_milestones(&store);
     let mut out: Vec<_> = store.spaces.values().filter_map(|sp| {
         space_role(&store, &a.0, &sp.id).map(|role| {
             let project_ids: Vec<&String> = store.projects.values().filter(|p| p.space_id == sp.id).map(|p| &p.id).collect();
             let space_milestones: Vec<&Milestone> = store.milestones.values().filter(|m| project_ids.contains(&&m.project_id)).collect();
-            let open: Vec<&Finding> = store.findings.values().filter(|f| f.status == "open"
-                && store.milestones.get(&f.milestone_id).map(|m| project_ids.contains(&&m.project_id)).unwrap_or(false)).collect();
+            let open: Vec<&Finding> = project_ids.iter().flat_map(|pid| current_findings(&store, &latest, pid)).collect();
             serde_json::json!({
                 "id": sp.id, "slug": sp.slug, "name": sp.name, "role": role,
                 "projects": project_ids.len(),
@@ -871,7 +961,9 @@ async fn list_spaces(State(state): State<Shared>, headers: HeaderMap) -> Respons
 async fn create_space(State(state): State<Shared>, headers: HeaderMap, Json(body): Json<CreateSpaceBody>) -> Response {
     let a = auth!(&state, &headers);
     if !a.0.is_platform_admin { return err(StatusCode::FORBIDDEN, "Only admins can create spaces."); }
-    let space = Space { id: new_id("spc"), slug: slugify(&body.name), name: body.name, created_by: a.0.id.clone() };
+    let name = body.name.trim().to_string();
+    if name.is_empty() || slugify(&name).is_empty() { return err(StatusCode::BAD_REQUEST, "Give the space a name with at least one letter or number."); }
+    let space = Space { id: new_id("spc"), slug: slugify(&name), name, created_by: a.0.id.clone() };
     let id = space.id.clone();
     let mut store = state.store.write().await;
     // Creator becomes Owner so the space is usable immediately.
@@ -893,6 +985,9 @@ async fn add_member(State(state): State<Shared>, headers: HeaderMap, Path(space_
         match space_role(&store, &a.0, &space_id) {
             Some(r) if r.can_manage_members() => {}
             _ => return err(StatusCode::FORBIDDEN, "Only a Space Owner can change members."),
+        }
+        if body.principal_kind != "user" && body.principal_kind != "group" {
+            return err(StatusCode::BAD_REQUEST, "principal_kind must be user or group.");
         }
         if body.principal_kind == "user" && !store.users.contains_key(&body.principal_id) {
             return err(StatusCode::BAD_REQUEST, "That user does not exist.");
@@ -946,8 +1041,11 @@ async fn create_project(State(state): State<Shared>, headers: HeaderMap, Path(sp
         Some(r) if r.can_create_project() => {}
         _ => return err(StatusCode::FORBIDDEN, "Your role in this space cannot create projects."),
     }
+    if !store.spaces.contains_key(&space_id) { return err(StatusCode::NOT_FOUND, "Space not found."); }
     drop(store);
-    let project = Project { id: new_id("prj"), space_id, slug: slugify(&body.name), name: body.name, visibility: "space".into() };
+    let name = body.name.trim().to_string();
+    if name.is_empty() || slugify(&name).is_empty() { return err(StatusCode::BAD_REQUEST, "Give the project a name with at least one letter or number."); }
+    let project = Project { id: new_id("prj"), space_id, slug: slugify(&name), name, visibility: "space".into() };
     let id = project.id.clone();
     state.store.write().await.projects.insert(id.clone(), project);
     persist(&state).await;
@@ -959,7 +1057,9 @@ async fn list_projects(State(state): State<Shared>, headers: HeaderMap, Path(spa
     let a = auth!(&state, &headers);
     let store = state.store.read().await;
     if space_role(&store, &a.0, &space_id).is_none() { return err(StatusCode::FORBIDDEN, "Not a member of this space."); }
-    let out: Vec<_> = store.projects.values().filter(|p| p.space_id == space_id).map(|p| {
+    let latest = latest_milestones(&store);
+    let mut out: Vec<_> = store.projects.values().filter(|p| p.space_id == space_id).map(|p| {
+        let current = current_findings(&store, &latest, &p.id);
         let pms: Vec<&Milestone> = store.milestones.values().filter(|m| m.project_id == p.id).collect();
         let mut langs: Vec<String> = Vec::new();
         for m in &pms { for l in &m.languages { if !langs.contains(l) { langs.push(l.clone()); } } }
@@ -968,12 +1068,11 @@ async fn list_projects(State(state): State<Shared>, headers: HeaderMap, Path(spa
             "milestones": pms.len(),
             "languages": langs,
             "last_activity": pms.iter().map(|m| m.created_at.clone()).max(),
-            "open_findings": store.findings.values().filter(|f| f.status == "open"
-                && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count(),
-            "vulnerabilities": store.findings.values().filter(|f| f.status == "open" && f.kind == "cve"
-                && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count()
+            "open_findings": current.len(),
+            "vulnerabilities": current.iter().filter(|f| f.kind == "cve").count()
         })
     }).collect();
+    out.sort_by(|x, y| x["name"].as_str().cmp(&y["name"].as_str()));
     Json(out).into_response()
 }
 
@@ -983,13 +1082,13 @@ async fn get_project(State(state): State<Shared>, headers: HeaderMap, Path(id): 
     let Some(p) = can_read_project(&store, &a.0, &id) else { return err(StatusCode::NOT_FOUND, "Project not found."); };
     let mut ms: Vec<_> = store.milestones.values().filter(|m| m.project_id == id).collect();
     ms.sort_by_key(|m| m.seq_no);
-    let project_findings: Vec<&Finding> = store.findings.values().filter(|f| f.status == "open"
-        && store.milestones.get(&f.milestone_id).map(|m| m.project_id == id).unwrap_or(false)).collect();
+    let latest = latest_milestones(&store);
+    let project_findings: Vec<&Finding> = current_findings(&store, &latest, &id);
     let mut lang_set: Vec<String> = Vec::new();
     for m in ms.iter() { for l in &m.languages { if !lang_set.contains(l) { lang_set.push(l.clone()); } } }
     let last_push = ms.iter().map(|m| m.created_at.clone()).max();
     Json(serde_json::json!({
-        "project": { "id": p.id, "space_id": p.space_id, "slug": p.slug, "name": p.name },
+        "project": { "id": p.id, "space_id": p.space_id, "slug": p.slug, "name": p.name, "visibility": p.visibility },
         "summary": {
             "languages": lang_set,
             "milestones": ms.len(),
@@ -1032,6 +1131,9 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
         (p, store.settings.clone())
     };
     if body.is_empty() { return err(StatusCode::BAD_REQUEST, "Send a zip file as the request body."); }
+    if body.len() as u64 > settings.max_compressed_mb * 1024 * 1024 {
+        return err(StatusCode::PAYLOAD_TOO_LARGE, &format!("This zip is larger than the {} MB limit set in Admin → Settings.", settings.max_compressed_mb));
+    }
 
     // ClamAV INSTREAM scan when CLAMD is configured in Settings (host:port).
     if !settings.clamd_host.is_empty() {
@@ -1070,12 +1172,18 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
             let _ = tokio::fs::remove_dir_all(&tmp).await;
             return err(StatusCode::BAD_REQUEST, &format!("Upload rejected: {e}"));
         }
-        Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "Scan worker failed."),
+        Err(_) => {
+            let _ = tokio::fs::remove_dir_all(&tmp).await;
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "Scan worker failed.");
+        }
     };
 
     // Blob-store the original zip + index every file for browsing without unzip.
     let blob_key = format!("blobs/{}/{}.zip", &project.id, scanner::sha256_hex(&body));
-    let _ = blob_put(&state, &blob_key, &body).await;
+    if let Err(e) = blob_put(&state, &blob_key, &body).await {
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Could not store the upload: {e}"));
+    }
 
     // Open-standard manifest: vibe/manifest.json wins, headers are the fallback.
     let mut manifest = ArtifactManifest::default();
@@ -1084,7 +1192,15 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
     manifest.about = header_str(&headers, "x-about");
     manifest.stage = { let s = header_str(&headers, "x-stage"); if s.is_empty() { "building".into() } else { s } };
     if let Ok(text) = tokio::fs::read_to_string(tmp.join("vibe/manifest.json")).await {
-        if let Ok(parsed) = serde_json::from_str::<ArtifactManifest>(&text) { manifest = parsed; }
+        if let Ok(mut parsed) = serde_json::from_str::<ArtifactManifest>(&text) {
+            // The manifest wins, but an empty field must not wipe the label/about
+            // the client sent in headers (the label used to be lost here).
+            if parsed.label.trim().is_empty() { parsed.label = manifest.label.clone(); }
+            if parsed.about.trim().is_empty() { parsed.about = manifest.about.clone(); }
+            if parsed.stage.trim().is_empty() { parsed.stage = manifest.stage.clone(); }
+            parsed.project = project.slug.clone();
+            manifest = parsed;
+        }
     }
     if manifest.label.is_empty() { manifest.label = format!("Milestone pushed {}", now()); }
 
@@ -1139,21 +1255,20 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
     }
 
     let seq = {
-        let store = state.store.read().await;
-        store.milestones.values().filter(|m| m.project_id == project_id).map(|m| m.seq_no).max().unwrap_or(0) + 1
-    };
-    let milestone = Milestone {
-        id: milestone_id.clone(), project_id: project_id.clone(), seq_no: seq,
-        label: manifest.label.clone(), parent_milestone_id: None, blob_key,
-        manifest, scan_status: "done".into(), languages: languages.clone(), created_by: a.0.id.clone(), created_at: now(), screenshots: Vec::new(),
-    };
-    {
+        // Number assigned under the write lock: two pushes at once used to get the same #.
         let mut store = state.store.write().await;
+        let seq = store.milestones.values().filter(|m| m.project_id == project_id).map(|m| m.seq_no).max().unwrap_or(0) + 1;
+        let milestone = Milestone {
+            id: milestone_id.clone(), project_id: project_id.clone(), seq_no: seq,
+            label: manifest.label.clone(), parent_milestone_id: None, blob_key,
+            manifest, scan_status: "done".into(), languages: languages.clone(), created_by: a.0.id.clone(), created_at: now(), screenshots: Vec::new(),
+        };
         store.milestones.insert(milestone_id.clone(), milestone);
         store.files.extend(stored);
         for f in findings.iter() { store.findings.insert(f.id.clone(), f.clone()); }
         store.todos.extend(todos.iter().cloned());
-    }
+        seq
+    };
     let _ = tokio::fs::remove_dir_all(&tmp).await;
     persist(&state).await;
     audit(&state, &a.0.id, "milestone:push", "milestone", &milestone_id, "success").await;
@@ -1262,7 +1377,7 @@ async fn milestone_findings(State(state): State<Shared>, headers: HeaderMap, Pat
     let Some(m) = store.milestones.get(&id) else { return err(StatusCode::NOT_FOUND, "Milestone not found."); };
     if can_read_project(&store, &a.0, &m.project_id).is_none() { return err(StatusCode::FORBIDDEN, "No access."); }
     let mut out: Vec<_> = store.findings.values().filter(|f| f.milestone_id == id).cloned().collect();
-    out.sort_by(|x, y| x.severity.cmp(&y.severity));
+    out.sort_by_key(|f| severity_rank(&f.severity));
     Json(out).into_response()
 }
 
@@ -1288,6 +1403,12 @@ async fn fork_milestone(State(state): State<Shared>, headers: HeaderMap, Path(id
     let a = auth!(&state, &headers);
     let mut store = state.store.write().await;
     let Some(src) = store.milestones.get(&id).cloned() else { return err(StatusCode::NOT_FOUND, "Milestone not found."); };
+    // Without this check anyone with push rights anywhere could copy a milestone
+    // (files, secrets findings, SBOM) out of a project they cannot even see.
+    if can_read_project(&store, &a.0, &src.project_id).is_none() {
+        return err(StatusCode::NOT_FOUND, "Milestone not found.");
+    }
+    let label = if body.label.trim().is_empty() { format!("Fork of {}", src.label) } else { body.label.trim().to_string() };
     let Some(dst_project) = store.projects.get(&body.to_project_id).cloned() else {
         return err(StatusCode::NOT_FOUND, "Target project not found.");
     };
@@ -1301,16 +1422,19 @@ async fn fork_milestone(State(state): State<Shared>, headers: HeaderMap, Path(id
         .map(|f| StoredFile { milestone_id: forked_id.clone(), ..f.clone() }).collect();
     let findings: Vec<Finding> = store.findings.values().filter(|f| f.milestone_id == id)
         .map(|f| { let mut c = f.clone(); c.id = new_id("find"); c.milestone_id = forked_id.clone(); c }).collect();
+    let todos: Vec<TodoItem> = store.todos.iter().filter(|t| t.milestone_id == id)
+        .map(|t| { let mut c = t.clone(); c.id = new_id("todo"); c.milestone_id = forked_id.clone(); c }).collect();
     let mut copy = src.clone();
     copy.id = forked_id.clone();
     copy.project_id = body.to_project_id.clone();
     copy.seq_no = seq;
-    copy.label = body.label;
+    copy.label = label;
     copy.parent_milestone_id = Some(id.clone());
     copy.created_by = a.0.id.clone();
     copy.created_at = now();
     store.milestones.insert(forked_id.clone(), copy);
     store.files.extend(files);
+    store.todos.extend(todos);
     for f in findings { store.findings.insert(f.id.clone(), f); }
     drop(store);
     persist(&state).await;
@@ -1335,11 +1459,15 @@ async fn add_screenshot(State(state): State<Shared>, headers: HeaderMap, Path(id
         let _ = project_id;
     }
     if body.is_empty() || body.len() > 10 * 1024 * 1024 { return err(StatusCode::BAD_REQUEST, "Send one image (max 10 MB)."); }
-    let name = { let n = header_str(&headers, "x-filename"); if n.is_empty() { "screenshot.png".into() } else { n } };
+    let name = safe_file_name(&header_str(&headers, "x-filename"));
     let key = format!("shots/{}/{}-{}", id, scanner::sha256_hex(&body), name);
-    let _ = blob_put(&state, &key, &body).await;
+    if let Err(e) = blob_put(&state, &key, &body).await {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Could not store the screenshot: {e}"));
+    }
     let mut store = state.store.write().await;
-    if let Some(m) = store.milestones.get_mut(&id) { m.screenshots.push(key.clone()); }
+    if let Some(m) = store.milestones.get_mut(&id) {
+        if !m.screenshots.contains(&key) { m.screenshots.push(key.clone()); }
+    }
     drop(store);
     persist(&state).await;
     Json(serde_json::json!({ "key": key, "url": format!("/api/v1/blobs/{key}") })).into_response()
@@ -1370,12 +1498,15 @@ async fn admin_create_user(State(state): State<Shared>, headers: HeaderMap, Json
     let a = auth!(&state, &headers);
     if let Err(r) = require_admin(&a) { return r; }
     if body.password.len() < 8 { return err(StatusCode::BAD_REQUEST, "Password needs at least 8 characters."); }
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() < 3 { return err(StatusCode::BAD_REQUEST, "Enter a valid email address."); }
+    if body.display_name.trim().is_empty() { return err(StatusCode::BAD_REQUEST, "Display name is required."); }
     let mut store = state.store.write().await;
     if store.users.values().any(|u| u.email.eq_ignore_ascii_case(&body.email)) {
         return err(StatusCode::CONFLICT, "A user with that email already exists.");
     }
     let user = User {
-        id: new_id("usr"), email: body.email.to_lowercase(), display_name: body.display_name,
+        id: new_id("usr"), email, display_name: body.display_name.trim().to_string(),
         password_hash: hash_password(&body.password), is_platform_admin: body.is_platform_admin,
         mfa_secret: None, mfa_enabled: false, oidc_subject: None,
         is_blocked: false, blocked_reason: None, created_at: now(),
@@ -1394,6 +1525,7 @@ struct BlockBody { reason: String }
 async fn admin_block(State(state): State<Shared>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<BlockBody>) -> Response {
     let a = auth!(&state, &headers);
     if let Err(r) = require_admin(&a) { return r; }
+    if id == a.0.id { return err(StatusCode::BAD_REQUEST, "You cannot block your own account."); }
     let mut store = state.store.write().await;
     let Some(u) = store.users.get_mut(&id) else { return err(StatusCode::NOT_FOUND, "User not found."); };
     u.is_blocked = true;
@@ -1413,6 +1545,7 @@ async fn admin_unblock(State(state): State<Shared>, headers: HeaderMap, Path(id)
     u.blocked_reason = None;
     drop(store);
     persist(&state).await;
+    audit(&state, &a.0.id, "user:unblock", "user", &id, "success").await;
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
@@ -1431,7 +1564,7 @@ async fn admin_nudge(State(state): State<Shared>, headers: HeaderMap, Path(id): 
         .max_by_key(|m| m.seq_no).map(|m| m.id.clone());
     let Some(mid) = target else { return err(StatusCode::NOT_FOUND, "That user has no milestones yet."); };
     store.todos.push(TodoItem { id: new_id("todo"), milestone_id: mid.clone(), body: format!("Message from admin: {}", body.message), done: false, source: "admin".into() });
-    let target_email = state.store.read().await.users.get(&id).map(|u| u.email.clone()).unwrap_or_default();
+    let target_email = store.users.get(&id).map(|u| u.email.clone()).unwrap_or_default();
     drop(store);
     persist(&state).await;
     audit(&state, &a.0.id, "user:nudge", "user", &id, "success").await;
@@ -1455,9 +1588,14 @@ struct CreateGroupBody { name: String, description: String, #[serde(default)] me
 async fn admin_create_group(State(state): State<Shared>, headers: HeaderMap, Json(body): Json<CreateGroupBody>) -> Response {
     let a = auth!(&state, &headers);
     if let Err(r) = require_admin(&a) { return r; }
-    let group = Group { id: new_id("grp"), name: body.name, description: body.description, member_ids: body.member_ids };
+    if body.name.trim().is_empty() { return err(StatusCode::BAD_REQUEST, "Group name is required."); }
+    let mut store = state.store.write().await;
+    let mut member_ids: Vec<String> = body.member_ids.into_iter().filter(|m| store.users.contains_key(m)).collect();
+    member_ids.dedup();
+    let group = Group { id: new_id("grp"), name: body.name.trim().to_string(), description: body.description, member_ids };
     let id = group.id.clone();
-    state.store.write().await.groups.insert(id.clone(), group);
+    store.groups.insert(id.clone(), group);
+    drop(store);
     persist(&state).await;
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
 }
@@ -1467,7 +1605,8 @@ async fn admin_vulns(State(state): State<Shared>, headers: HeaderMap) -> Respons
     let a = auth!(&state, &headers);
     if let Err(r) = require_admin(&a) { return r; }
     let store = state.store.read().await;
-    let mut rows: Vec<_> = store.findings.values().filter(|f| f.status == "open").filter_map(|f| {
+    let latest: std::collections::HashSet<String> = latest_milestones(&store).into_values().collect();
+    let mut rows: Vec<_> = store.findings.values().filter(|f| f.status == "open" && latest.contains(&f.milestone_id)).filter_map(|f| {
         let m = store.milestones.get(&f.milestone_id)?;
         let p = store.projects.get(&m.project_id)?;
         let owner = store.users.get(&m.created_by);
@@ -1479,7 +1618,7 @@ async fn admin_vulns(State(state): State<Shared>, headers: HeaderMap) -> Respons
             "owner_blocked": owner.map(|u| u.is_blocked).unwrap_or(false)
         }))
     }).collect();
-    rows.sort_by(|x, y| x["severity"].as_str().cmp(&y["severity"].as_str()));
+    rows.sort_by_key(|r| severity_rank(r["severity"].as_str().unwrap_or("")));
     let critical = rows.iter().filter(|r| r["severity"] == "critical").count();
     Json(serde_json::json!({ "total_open": rows.len(), "critical": critical, "rows": rows })).into_response()
 }
@@ -1623,8 +1762,23 @@ async fn project_favicon(State(state): State<Shared>, headers: HeaderMap, Path(i
 }
 
 async fn serve_blob(State(state): State<Shared>, headers: HeaderMap, Path(key): Path<String>) -> Response {
-    let _ = auth!(&state, &headers);
-    // Keys are content-addressed; the milestone ACL was checked when the key was handed out.
+    let a = auth!(&state, &headers);
+    // Only keys that belong to a milestone the caller can read. This used to
+    // serve any path under data/ to any signed-in user — including db.json
+    // (every password hash and secret) and signing.key, plus "../" escapes.
+    if key.split('/').any(|part| part.is_empty() || part == "." || part == "..") || key.contains('\\') {
+        return err(StatusCode::NOT_FOUND, "Not found.");
+    }
+    {
+        let store = state.store.read().await;
+        let owner = store.files.iter().find(|f| f.blob_key == key).map(|f| f.milestone_id.clone())
+            .or_else(|| store.milestones.values().find(|m| m.blob_key == key || m.screenshots.contains(&key)).map(|m| m.id.clone()));
+        let allowed = owner
+            .and_then(|mid| store.milestones.get(&mid).map(|m| m.project_id.clone()))
+            .map(|pid| can_read_project(&store, &a.0, &pid).is_some())
+            .unwrap_or(false);
+        if !allowed { return err(StatusCode::NOT_FOUND, "Not found."); }
+    }
     match blob_get(&state, &key).await {
         Ok(bytes) => {
             let lower = key.to_lowercase();
@@ -1738,6 +1892,9 @@ async fn my_delete(State(state): State<Shared>, headers: HeaderMap, Json(body): 
         return err(StatusCode::UNAUTHORIZED, "Password did not match.");
     }
     let mut store = state.store.write().await;
+    if a.0.is_platform_admin && store.users.values().filter(|u| u.is_platform_admin && !u.is_blocked).count() <= 1 {
+        return err(StatusCode::BAD_REQUEST, "You are the only admin. Make someone else an admin before deleting your account.");
+    }
     store.tokens.retain(|_, t| t.user_id != a.0.id);
     store.refresh_tokens.retain(|t| t.user_id != a.0.id);
     store.members.retain(|m| !(m.principal_kind == "user" && m.principal_id == a.0.id));
@@ -1785,8 +1942,7 @@ async fn registry(State(state): State<Shared>, headers: HeaderMap, Query(q): Que
                 "id": p.id, "name": p.name, "slug": p.slug,
                 "milestones": ms.len(), "latest_milestone": latest.map(|m| m.id.clone()),
                 "languages": latest.map(|m| m.languages.clone()).unwrap_or_default(),
-                "open_findings": store.findings.values().filter(|f| f.status == "open"
-                    && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count()
+                "open_findings": latest.map(|m| store.findings.values().filter(|f| f.milestone_id == m.id && f.status == "open").count()).unwrap_or(0)
             })
         }).collect();
     out.sort_by(|x, y| x["name"].as_str().cmp(&y["name"].as_str()));
@@ -1852,7 +2008,7 @@ async fn apply_fix(State(state): State<Shared>, headers: HeaderMap, Path(id): Pa
                 }
             } else if manifest_name == "requirements.txt" {
                 text = text.lines().map(|line| {
-                    if line.to_lowercase().starts_with(&pkg.to_lowercase()) {
+                    if requirement_name(line).eq_ignore_ascii_case(&pkg) {
                         bumped = true;
                         format!("{pkg}=={fixed}")
                     } else { line.to_string() }
@@ -1862,7 +2018,8 @@ async fn apply_fix(State(state): State<Shared>, headers: HeaderMap, Path(id): Pa
                 text = text.lines().map(|line| {
                     let t = line.trim();
                     if t.starts_with('[') { in_deps = t.contains("dependencies"); }
-                    if in_deps && t.starts_with(&pkg) && t.contains("version") {
+                    let dep_name = t.split(|c: char| c == '=' || c.is_whitespace()).next().unwrap_or("").trim_matches('"');
+                    if in_deps && dep_name == pkg && t.contains('"') {
                         bumped = true;
                         let re = regex_lite_version(line, &fixed);
                         return re;
@@ -1901,17 +2058,21 @@ async fn apply_fix(State(state): State<Shared>, headers: HeaderMap, Path(id): Pa
     let zip_bytes = tokio::fs::read(&zip_path).await.unwrap_or_default();
     let _ = tokio::fs::remove_dir_all(&tmp).await;
     let _ = tokio::fs::remove_file(&zip_path).await;
-    let mut hdrs = HeaderMap::new();
-    hdrs.insert("x-milestone-label", format!("Auto-fix: {pkg} → {fixed}").parse().unwrap());
-    // Reuse push by direct internal call shape: emulate headers via a fresh request is
-    // not possible here, so store the milestone through push_milestone with Bytes.
-    let resp = push_milestone(State(state.clone()), {
-        let mut h = headers.clone();
-        h.insert("x-milestone-label", format!("Auto-fix: {pkg} to {fixed}").parse().unwrap());
-        h
-    }, Path(project.id.clone()), Bytes::from(zip_bytes)).await;
-    let _ = hdrs;
-    resp
+    if zip_bytes.is_empty() {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "Could not rebuild the project for the fix.");
+    }
+    // Same ingest path as a normal push, labelled so History shows what changed.
+    let mut h = headers.clone();
+    if let Ok(v) = format!("Auto-fix: {pkg} to {fixed}").parse() { h.insert("x-milestone-label", v); }
+    h.remove("x-about");
+    push_milestone(State(state.clone()), h, Path(project.id.clone()), Bytes::from(zip_bytes)).await
+}
+
+/// Package name of a requirements.txt line ("requests[socks]>=2.0 ; python_version>'3'" → "requests").
+fn requirement_name(line: &str) -> &str {
+    let t = line.trim();
+    let end = t.find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')).unwrap_or(t.len());
+    &t[..end]
 }
 
 fn walk_manifests(root: &std::path::Path, name: &str) -> Vec<PathBuf> {
@@ -2014,14 +2175,18 @@ async fn main() {
         .route("/api/v1/spaces/{id}/projects", get(list_projects).post(create_project))
         .route("/api/v1/projects/{id}", get(get_project))
         .route("/api/v1/projects/{id}/favicon", get(project_favicon))
-        .route("/api/v1/projects/{id}/milestones", get(list_milestones).post(push_milestone))
+        // Axum's default 2 MB body cap rejected any real project zip with 413.
+        // Allow large uploads here; push_milestone enforces Admin → Settings limits.
+        .route("/api/v1/projects/{id}/milestones", get(list_milestones)
+            .post(push_milestone).layer(axum::extract::DefaultBodyLimit::max(UPLOAD_BODY_CAP)))
         .route("/api/v1/milestones/{id}", get(get_milestone))
         .route("/api/v1/milestones/{id}/files/content", get(file_content))
         .route("/api/v1/milestones/{id}/findings", get(milestone_findings))
         .route("/api/v1/milestones/{id}/sbom", get(download_sbom))
         .route("/api/v1/milestones/{id}/export/{format}", get(export_sbom))
         .route("/api/v1/milestones/{id}/fork", post(fork_milestone))
-        .route("/api/v1/milestones/{id}/screenshots", post(add_screenshot))
+        .route("/api/v1/milestones/{id}/screenshots", post(add_screenshot)
+            .layer(axum::extract::DefaultBodyLimit::max(SCREENSHOT_BODY_CAP)))
         .route("/api/v1/findings/{id}/ignore", post(ignore_finding))
         .route("/api/v1/blobs/{*key}", get(serve_blob))
         .route("/api/v1/admin/users", get(admin_users).post(admin_create_user))
@@ -2101,6 +2266,42 @@ mod tests {
         // we pin the base32 helpers TOTP depends on.
         assert_eq!(base32_encode(b"hello"), "NBSWY3DP");
         assert_eq!(base32_decode("NBSWY3DP"), b"hello".to_vec());
+    }
+
+    #[test]
+    fn screenshot_names_cannot_escape_the_blob_dir() {
+        assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(safe_file_name("..\\..\\win.ini"), "win.ini");
+        assert_eq!(safe_file_name(".."), "screenshot.png");
+        assert_eq!(safe_file_name("my shot (1).png"), "my-shot--1-.png");
+        assert!(!safe_file_name("a/../b").contains('/'));
+    }
+
+    #[test]
+    fn severity_sorts_by_urgency() {
+        let mut v = vec!["low", "medium", "critical", "high"];
+        v.sort_by_key(|s| severity_rank(s));
+        assert_eq!(v, ["critical", "high", "medium", "low"]);
+    }
+
+    #[test]
+    fn requirement_names_match_exactly() {
+        assert_eq!(requirement_name("requests==2.0"), "requests");
+        assert_eq!(requirement_name("requests-oauthlib>=1.0"), "requests-oauthlib");
+        assert_eq!(requirement_name("requests[socks]>=2.0"), "requests");
+        assert_ne!(requirement_name("requests-oauthlib==1.0"), "requests");
+    }
+
+    #[test]
+    fn constant_time_eq_works() {
+        assert!(constant_time_eq("abc", "abc"));
+        assert!(!constant_time_eq("abc", "abd"));
+        assert!(!constant_time_eq("abc", "ab"));
+    }
+
+    #[test]
+    fn urlencoding_is_utf8_safe() {
+        assert_eq!(urlencoding("a b/é"), "a%20b%2F%C3%A9");
     }
 
     #[test]
