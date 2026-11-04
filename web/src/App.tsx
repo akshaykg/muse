@@ -52,6 +52,7 @@ import { NotFoundScreen, ServerErrorScreen, ErrorBoundary } from "./components/E
 import { AdminSettings, type AdminSettingsTab } from "./components/AdminSettings";
 import { AiReviewPanel, IconSparkles } from "./components/AiReview";
 import { AiSettings } from "./components/AiSettings";
+import { MilestoneShowcase } from "./components/Showcase";
 
 type Me = Awaited<ReturnType<typeof api.me>>;
 type View =
@@ -1549,7 +1550,7 @@ function ProjectBody({ data, role, selected, setSelected, showPush, setShowPush,
       <div className="mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 lg:order-1 order-2">
           {selected
-            ? <MilestoneDetail milestoneId={selected} projectId={projectId} canPush={canPush} onChanged={load} />
+            ? <MilestoneDetail milestoneId={selected} projectId={projectId} projectName={data.project.name} canPush={canPush} onChanged={load} />
             : <EmptyState title="Pick a milestone" hint="Its files, findings and screenshots appear here." />}
         </div>
         <aside aria-labelledby="history-title" className="order-1 lg:order-2 lg:sticky lg:top-20">
@@ -1734,14 +1735,13 @@ function UploadBox({ projectId, onDone, onCancel }: { projectId: string; onDone:
 
 type MileData = Awaited<ReturnType<typeof api.milestone>>;
 
-function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { milestoneId: string; projectId: string; canPush: boolean; onChanged: () => void }) {
+function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, onChanged }: { milestoneId: string; projectId: string; projectName?: string; canPush: boolean; onChanged: () => void }) {
   const [tab, setTab] = useState("findings");
   const [data, setData] = useState<MileData | null>(null);
   const [openFile, setOpenFile] = useState<{ path: string; text: string } | null>(null);
   const [myProjects, setMyProjects] = useState<Awaited<ReturnType<typeof api.myProjects>>>([]);
   const [forkTo, setForkTo] = useState("");
   const [forking, setForking] = useState(false);
-  const [shotBusy, setShotBusy] = useState(false);
   const [fixing, setFixing] = useState<string | null>(null);
   const [loadError, setLoadError] = useState("");
   const toast = useToast();
@@ -1762,6 +1762,13 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
 
   return (
     <div>
+      <MilestoneShowcase
+        milestoneId={milestoneId}
+        projectName={projectName}
+        shots={shots}
+        canPush={canPush}
+        onShotsChanged={async () => { await load(); onChanged(); }}
+      />
       <Tabs
         ariaLabel="Milestone"
         value={tab}
@@ -1773,7 +1780,6 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
           { key: "files", label: `Files (${data.files.length})` },
           { key: "todos", label: `To-dos & gaps (${data.todos.length})` },
           { key: "sbom", label: `SBOM (${data.sbom?.total ?? 0})` },
-          { key: "shots", label: `Screenshots (${shots.length})` },
         ]}
       />
       <div role="tabpanel" className="mt-4">
@@ -1910,27 +1916,6 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
           />
         )}
 
-        {tab === "shots" && (
-          <Card className="p-4">
-            <p className="text-sm text-text-muted">Remember how this milestone looked. Screenshots stay with this version in History.</p>
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {shots.map((k) => <ShotThumb key={k} blobKey={k} />)}
-            </div>
-            {shots.length === 0 && <p className="mt-3 text-sm text-text-muted">No screenshots yet.</p>}
-            {canPush && <form className="mt-4 flex flex-wrap gap-2" onSubmit={async (e) => {
-              e.preventDefault();
-              const file = e.currentTarget.querySelector<HTMLInputElement>("input[type=file]")?.files?.[0];
-              if (!file) { toast.error("Choose an image first."); return; }
-              setShotBusy(true);
-              try { await api.addScreenshot(milestoneId, file); await load(); onChanged(); toast.success("Screenshot attached."); }
-              catch (err) { toast.error(err instanceof Error ? err.message : "Upload failed."); }
-              finally { setShotBusy(false); }
-            }}>
-              <Input type="file" accept="image/*" aria-label="Screenshot image" className="w-auto" />
-              <Button type="submit" busy={shotBusy}>Attach screenshot</Button>
-            </form>}
-          </Card>
-        )}
       </div>
 
       {canPush && myProjects.some((p) => p.id !== projectId) && <Card className="mt-6 p-5">
@@ -1952,26 +1937,6 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
         </form>
       </Card>}
     </div>
-  );
-}
-
-/** Screenshot preview, fetched with the session token (an <img src> can't send it). */
-function ShotThumb({ blobKey }: { blobKey: string }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    let made: string | null = null;
-    void api.blobUrl(blobKey).then((u) => { made = u; if (live) setUrl(u); });
-    return () => { live = false; if (made) URL.revokeObjectURL(made); };
-  }, [blobKey]);
-  const name = blobKey.split("/").pop()?.replace(/^[0-9a-f]{64}-/, "") ?? "screenshot";
-  return (
-    <a href={url ?? undefined} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded-md border border-border bg-background">
-      {url
-        ? <img src={url} alt={name} className="aspect-video w-full object-cover transition-transform duration-normal group-hover:scale-[1.02]" />
-        : <Skeleton className="aspect-video w-full rounded-none" />}
-      <span className="block truncate px-2 py-1.5 text-xs text-text-muted">{name}</span>
-    </a>
   );
 }
 
