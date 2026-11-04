@@ -69,7 +69,7 @@ export function AiSettings() {
     try {
       const next = await aiApi.saveConfig({
         enabled: cfg.enabled, base_url: cfg.base_url, model: cfg.model, redact_secrets: cfg.redact_secrets,
-        max_chars: cfg.max_chars, reasoning_effort: cfg.reasoning_effort,
+        max_chars: cfg.max_chars, reasoning_effort: cfg.reasoning_effort, auto_preview: cfg.auto_preview,
         api_key: newKey.trim() || undefined, ...extra,
       });
       setCfg(next); setNewKey(""); setShowKey(false);
@@ -184,6 +184,15 @@ export function AiSettings() {
         {selected?.trains_on_data && (
           <Alert variant="warning">Contributor models are cheaper because Meta may use what you send to train its models. Use them only for code you are happy to share.</Alert>
         )}
+      </Section>
+
+      <Section title="Screenshots" description="Most people recognise a version by how it looks, not by its name.">
+        <Toggle
+          checked={cfg.auto_preview}
+          onChange={(v) => set("auto_preview", v)}
+          label="Sketch a preview when a milestone has no screenshot"
+          description="About 20 seconds after a push without screenshots, Muse reads the screen code and draws what the app most likely looks like. It is shown at the top of the milestone and labelled as an AI preview. A real screenshot always takes its place."
+        />
       </Section>
 
       <Section title="Safety and cost" description="What leaves this server, and how much of it.">

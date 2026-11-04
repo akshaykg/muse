@@ -1279,6 +1279,7 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
     let _ = tokio::fs::remove_dir_all(&tmp).await;
     persist(&state).await;
     audit(&state, &a.0.id, "milestone:push", "milestone", &milestone_id, "success").await;
+    ai::after_push(&state, &milestone_id, &a.0.id).await;
     let threshold_hit = {
         let rank = |sev: &str| match sev { "critical" => 4, "high" => 3, "medium" => 2, _ => 1 };
         let min = rank(&settings.block_severity);

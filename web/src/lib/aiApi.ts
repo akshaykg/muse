@@ -45,6 +45,7 @@ export type AiConfig = {
   redact_secrets: boolean;
   max_chars: number;
   reasoning_effort: string;
+  auto_preview: boolean;
   api_key_set: boolean;
   api_key_source: "settings" | "env" | "none";
   api_key_hint: string;
@@ -54,7 +55,11 @@ export type AiModel = { id: string; label: string; note?: string; price?: string
 
 export type AiConfigUpdate = Omit<AiConfig, "api_key_set" | "api_key_source" | "api_key_hint"> & { api_key?: string; clear_api_key?: boolean };
 
+export type AiPreview = { milestone_id: string; status: "running" | "done" | "failed"; model: string; started_at: string; finished_at: string | null; duration_ms: number; error: string | null; title: string; caption: string; html: string };
+
 export const aiApi = {
+  preview: (milestoneId: string) => req<{ preview: AiPreview | null }>(`/api/v1/milestones/${milestoneId}/ai-preview`),
+  startPreview: (milestoneId: string) => req<{ preview: AiPreview }>(`/api/v1/milestones/${milestoneId}/ai-preview`, { method: "POST" }),
   status: () => req<AiStatus>("/api/v1/ai/status"),
   review: (milestoneId: string) => req<{ review: AiReview | null }>(`/api/v1/milestones/${milestoneId}/ai-review`),
   start: (milestoneId: string) => req<{ review: AiReview }>(`/api/v1/milestones/${milestoneId}/ai-review`, { method: "POST" }),
