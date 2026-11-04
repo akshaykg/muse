@@ -51,6 +51,8 @@ import {
 import { NotFoundScreen, ServerErrorScreen, ErrorBoundary } from "./components/ErrorScreens";
 import { AdminSettings, type AdminSettingsTab } from "./components/AdminSettings";
 import { AiReviewPanel, IconSparkles } from "./components/AiReview";
+import { AiAssessmentPanel } from "./components/AiAssessment";
+import { AdminAssessments, IconAssessment } from "./components/AdminAssessments";
 import { AiSettings } from "./components/AiSettings";
 import { MilestoneShowcase } from "./components/Showcase";
 
@@ -474,6 +476,22 @@ function Shell() {
                   ) : undefined
                 }
                 onClick={() => setView({ name: "admin", tab: "groups" })}
+              />
+
+              <div className="my-2 border-t border-border" />
+
+              {!settingsCollapsed && (
+                <p className="px-3 pb-1 pt-1 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                  Governance
+                </p>
+              )}
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "assessments"}
+                label="AI assessments"
+                hint={settingsCollapsed ? "AI assessments" : undefined}
+                icon={<IconAssessment />}
+                onClick={() => setView({ name: "admin", tab: "assessments" })}
               />
 
               <div className="my-2 border-t border-border" />
@@ -1824,6 +1842,15 @@ function UploadBox({ projectId, onDone, onCancel }: { projectId: string; onDone:
 
 type MileData = Awaited<ReturnType<typeof api.milestone>>;
 
+/** A milestone tab to open on the next MilestoneDetail load (e.g. from Admin → AI assessments). */
+const MILESTONE_TAB_KEY = "vf-milestone-tab";
+function takeMilestoneTab(): string | null {
+  try { const t = sessionStorage.getItem(MILESTONE_TAB_KEY); sessionStorage.removeItem(MILESTONE_TAB_KEY); return t; } catch { return null; }
+}
+function openMilestoneTab(tab: string) {
+  try { sessionStorage.setItem(MILESTONE_TAB_KEY, tab); } catch { /* storage blocked: opens on Findings */ }
+}
+
 function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, onChanged }: { milestoneId: string; projectId: string; projectName?: string; canPush: boolean; onChanged: () => void }) {
   const [tab, setTab] = useState("findings");
   const [data, setData] = useState<MileData | null>(null);
@@ -1841,7 +1868,7 @@ function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, on
     try { setData(await api.milestone(milestoneId)); }
     catch (e) { setData(null); setLoadError(e instanceof Error ? e.message : "Could not load this milestone."); }
   }, [milestoneId]);
-  useEffect(() => { void load(); setOpenFile(null); setTab("findings"); }, [load]);
+  useEffect(() => { void load(); setOpenFile(null); setTab(takeMilestoneTab() ?? "findings"); }, [load]);
   useEffect(() => { void api.myProjects().then(setMyProjects).catch(() => {}); }, []);
 
   if (!data && loadError) return <Alert>{loadError}</Alert>;
@@ -1866,6 +1893,7 @@ function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, on
           { key: "findings", label: `Findings (${open.length})` },
           { key: "fix", label: "Fix it" },
           { key: "ai", label: "✦ AI review" },
+          { key: "assessment", label: "✦ Assessment" },
           { key: "files", label: `Files (${data.files.length})` },
           { key: "todos", label: `To-dos & gaps (${data.todos.length})` },
           { key: "sbom", label: `SBOM (${data.sbom?.total ?? 0})` },
@@ -1995,6 +2023,17 @@ function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, on
         )}
 
         {tab === "sbom" && <SbomPanel milestoneId={milestoneId} sbom={data.sbom} />}
+
+        {tab === "assessment" && (
+          <AiAssessmentPanel
+            milestoneId={milestoneId}
+            projectName={projectName}
+            milestoneLabel={`#${data.milestone.seq_no} ${data.milestone.label}`}
+            canPush={canPush}
+            isAdmin={isPlatformAdmin}
+            onOpenSettings={() => { window.history.pushState({}, "", "/admin/settings/ai"); window.dispatchEvent(new PopStateEvent("popstate")); }}
+          />
+        )}
 
         {tab === "ai" && (
           <AiReviewPanel
@@ -2417,6 +2456,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {tab === "vulns" && "Vulnerabilities"}
           {tab === "people" && "People & access"}
           {tab === "groups" && "Groups & teams"}
+          {tab === "assessments" && "AI assessments"}
           {isSettingsTab && activeSettingsSubTab === "upload" && "Upload & Security Scanning"}
           {isSettingsTab && activeSettingsSubTab === "access" && "Access Control & API Tokens"}
           {isSettingsTab && activeSettingsSubTab === "policy" && "Governance Policies & Space Quotas"}
@@ -2428,6 +2468,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {tab === "vulns" && `${vulns?.total_open ?? 0} open (${vulns?.critical ?? 0} fix-now) across every project. Contact leaves a to-do on their latest milestone.`}
           {tab === "people" && `${users.length} ${users.length === 1 ? "person" : "people"}. Block stops all sign-ins and pushes instantly.`}
           {tab === "groups" && `${groups.length} group${groups.length === 1 ? "" : "s"}. Give a group a role in a space and every member inherits it.`}
+          {tab === "assessments" && "Every project's Meta Muse assessment, indexed: search by name, owner, licence, asset or issue, and filter by audience, platform, risk and more."}
           {isSettingsTab && activeSettingsSubTab === "upload" && "Decompression safeguards, zip-bomb defense ratios, ClamAV antivirus daemon, and OSV vulnerability lookups."}
           {isSettingsTab && activeSettingsSubTab === "access" && "Web browser session duration, personal API access token quotas, and open user self-registration."}
           {isSettingsTab && activeSettingsSubTab === "policy" && "Push security gates, software license blocklists (SPDX), vulnerability remediation SLAs, and space resource quotas."}
@@ -2448,6 +2489,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
             { key: "vulns", label: `Vulns${vulns ? ` (${vulns.total_open})` : ""}` },
             { key: "people", label: `People (${users.length})` },
             { key: "groups", label: `Groups (${groups.length})` },
+            { key: "assessments", label: "Assessments" },
             { key: "settings-upload", label: "Upload" },
             { key: "settings-access", label: "Access" },
             { key: "settings-policy", label: "Policy" },
@@ -2562,6 +2604,10 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
             ) : <div className="mt-3"><EmptyState title="No groups yet" hint="Create the first group with the button above." /></div>}
             <CreateGroup users={users} open={showCreateGroup} onClose={() => setShowCreateGroup(false)} onDone={load} />
           </div>
+        )}
+
+        {tab === "assessments" && (
+          <AdminAssessments onOpen={(projectId, milestoneId) => { openMilestoneTab("assessment"); go?.({ name: "project", id: projectId, milestoneId }); }} />
         )}
 
         {isAiTab && <AiSettings />}

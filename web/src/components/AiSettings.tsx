@@ -69,7 +69,7 @@ export function AiSettings() {
     try {
       const next = await aiApi.saveConfig({
         enabled: cfg.enabled, base_url: cfg.base_url, model: cfg.model, redact_secrets: cfg.redact_secrets,
-        max_chars: cfg.max_chars, reasoning_effort: cfg.reasoning_effort, auto_preview: cfg.auto_preview,
+        max_chars: cfg.max_chars, reasoning_effort: cfg.reasoning_effort, auto_preview: cfg.auto_preview, auto_assess: cfg.auto_assess,
         api_key: newKey.trim() || undefined, ...extra,
       });
       setCfg(next); setNewKey(""); setShowKey(false);
@@ -192,6 +192,15 @@ export function AiSettings() {
           onChange={(v) => set("auto_preview", v)}
           label="Sketch a preview when a milestone has no screenshot"
           description="About 20 seconds after a push without screenshots, Muse reads the screen code and draws what the app most likely looks like. It is shown at the top of the milestone and labelled as an AI preview. A real screenshot always takes its place."
+        />
+      </Section>
+
+      <Section title="Assessments" description="A release-readiness report for every project: who it is for, how it ships, and what could get the owner into trouble.">
+        <Toggle
+          checked={cfg.auto_assess}
+          onChange={(v) => set("auto_assess", v)}
+          label="Assess every new milestone automatically"
+          description="Right after each push, Muse decides whether the project is internal or external, web or mobile, how it is deployed, whether it is licensed properly and whether it ships paid or third-party media without permission. Results are indexed for Admin → AI assessments."
         />
       </Section>
 

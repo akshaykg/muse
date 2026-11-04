@@ -139,7 +139,7 @@ function Running({ review }: { review: AiReview }) {
   );
 }
 
-function PromptBox({ text, label = "Prompt for your AI tool" }: { text: string; label?: string }) {
+export function PromptBox({ text, label = "Prompt for your AI tool" }: { text: string; label?: string }) {
   return (
     <div className="rounded-md border border-primary/25 bg-primary/5">
       <div className="flex items-center justify-between gap-2 border-b border-primary/15 px-3 py-1.5">
