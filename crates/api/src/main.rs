@@ -416,6 +416,24 @@ fn can_read_project(store: &Store, user: &User, project_id: &str) -> Option<Proj
     Some(p)
 }
 
+/// Id of each project's newest milestone. Health numbers count only these:
+/// summing every milestone counted an issue once per push forever, so a
+/// project that had fixed everything still showed "N to fix".
+fn latest_milestones(store: &Store) -> HashMap<String, String> {
+    let mut best: HashMap<String, (u32, String)> = HashMap::new();
+    for m in store.milestones.values() {
+        let e = best.entry(m.project_id.clone()).or_insert((0, String::new()));
+        if m.seq_no >= e.0 { *e = (m.seq_no, m.id.clone()); }
+    }
+    best.into_iter().map(|(p, (_, id))| (p, id)).collect()
+}
+
+/// Open findings on the newest milestone of a project.
+fn current_findings<'a>(store: &'a Store, latest: &HashMap<String, String>, project_id: &str) -> Vec<&'a Finding> {
+    let Some(mid) = latest.get(project_id) else { return Vec::new() };
+    store.findings.values().filter(|f| &f.milestone_id == mid && f.status == "open").collect()
+}
+
 /// Severity order for sorting: most urgent first.
 fn severity_rank(sev: &str) -> u8 {
     match sev { "critical" => 0, "high" => 1, "medium" => 2, "low" => 3, _ => 4 }
@@ -919,12 +937,12 @@ struct CreateSpaceBody { name: String }
 async fn list_spaces(State(state): State<Shared>, headers: HeaderMap) -> Response {
     let a = auth!(&state, &headers);
     let store = state.store.read().await;
+    let latest = latest_milestones(&store);
     let mut out: Vec<_> = store.spaces.values().filter_map(|sp| {
         space_role(&store, &a.0, &sp.id).map(|role| {
             let project_ids: Vec<&String> = store.projects.values().filter(|p| p.space_id == sp.id).map(|p| &p.id).collect();
             let space_milestones: Vec<&Milestone> = store.milestones.values().filter(|m| project_ids.contains(&&m.project_id)).collect();
-            let open: Vec<&Finding> = store.findings.values().filter(|f| f.status == "open"
-                && store.milestones.get(&f.milestone_id).map(|m| project_ids.contains(&&m.project_id)).unwrap_or(false)).collect();
+            let open: Vec<&Finding> = project_ids.iter().flat_map(|pid| current_findings(&store, &latest, pid)).collect();
             serde_json::json!({
                 "id": sp.id, "slug": sp.slug, "name": sp.name, "role": role,
                 "projects": project_ids.len(),
@@ -1039,7 +1057,9 @@ async fn list_projects(State(state): State<Shared>, headers: HeaderMap, Path(spa
     let a = auth!(&state, &headers);
     let store = state.store.read().await;
     if space_role(&store, &a.0, &space_id).is_none() { return err(StatusCode::FORBIDDEN, "Not a member of this space."); }
-    let out: Vec<_> = store.projects.values().filter(|p| p.space_id == space_id).map(|p| {
+    let latest = latest_milestones(&store);
+    let mut out: Vec<_> = store.projects.values().filter(|p| p.space_id == space_id).map(|p| {
+        let current = current_findings(&store, &latest, &p.id);
         let pms: Vec<&Milestone> = store.milestones.values().filter(|m| m.project_id == p.id).collect();
         let mut langs: Vec<String> = Vec::new();
         for m in &pms { for l in &m.languages { if !langs.contains(l) { langs.push(l.clone()); } } }
@@ -1048,12 +1068,11 @@ async fn list_projects(State(state): State<Shared>, headers: HeaderMap, Path(spa
             "milestones": pms.len(),
             "languages": langs,
             "last_activity": pms.iter().map(|m| m.created_at.clone()).max(),
-            "open_findings": store.findings.values().filter(|f| f.status == "open"
-                && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count(),
-            "vulnerabilities": store.findings.values().filter(|f| f.status == "open" && f.kind == "cve"
-                && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count()
+            "open_findings": current.len(),
+            "vulnerabilities": current.iter().filter(|f| f.kind == "cve").count()
         })
     }).collect();
+    out.sort_by(|x, y| x["name"].as_str().cmp(&y["name"].as_str()));
     Json(out).into_response()
 }
 
@@ -1063,8 +1082,8 @@ async fn get_project(State(state): State<Shared>, headers: HeaderMap, Path(id): 
     let Some(p) = can_read_project(&store, &a.0, &id) else { return err(StatusCode::NOT_FOUND, "Project not found."); };
     let mut ms: Vec<_> = store.milestones.values().filter(|m| m.project_id == id).collect();
     ms.sort_by_key(|m| m.seq_no);
-    let project_findings: Vec<&Finding> = store.findings.values().filter(|f| f.status == "open"
-        && store.milestones.get(&f.milestone_id).map(|m| m.project_id == id).unwrap_or(false)).collect();
+    let latest = latest_milestones(&store);
+    let project_findings: Vec<&Finding> = current_findings(&store, &latest, &id);
     let mut lang_set: Vec<String> = Vec::new();
     for m in ms.iter() { for l in &m.languages { if !lang_set.contains(l) { lang_set.push(l.clone()); } } }
     let last_push = ms.iter().map(|m| m.created_at.clone()).max();
@@ -1586,7 +1605,8 @@ async fn admin_vulns(State(state): State<Shared>, headers: HeaderMap) -> Respons
     let a = auth!(&state, &headers);
     if let Err(r) = require_admin(&a) { return r; }
     let store = state.store.read().await;
-    let mut rows: Vec<_> = store.findings.values().filter(|f| f.status == "open").filter_map(|f| {
+    let latest: std::collections::HashSet<String> = latest_milestones(&store).into_values().collect();
+    let mut rows: Vec<_> = store.findings.values().filter(|f| f.status == "open" && latest.contains(&f.milestone_id)).filter_map(|f| {
         let m = store.milestones.get(&f.milestone_id)?;
         let p = store.projects.get(&m.project_id)?;
         let owner = store.users.get(&m.created_by);
@@ -1922,8 +1942,7 @@ async fn registry(State(state): State<Shared>, headers: HeaderMap, Query(q): Que
                 "id": p.id, "name": p.name, "slug": p.slug,
                 "milestones": ms.len(), "latest_milestone": latest.map(|m| m.id.clone()),
                 "languages": latest.map(|m| m.languages.clone()).unwrap_or_default(),
-                "open_findings": store.findings.values().filter(|f| f.status == "open"
-                    && store.milestones.get(&f.milestone_id).map(|m| m.project_id == p.id).unwrap_or(false)).count()
+                "open_findings": latest.map(|m| store.findings.values().filter(|f| f.milestone_id == m.id && f.status == "open").count()).unwrap_or(0)
             })
         }).collect();
     out.sort_by(|x, y| x["name"].as_str().cmp(&y["name"].as_str()));

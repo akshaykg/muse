@@ -1,7 +1,10 @@
-import type { SVGProps } from "react";
+import { useId, type SVGProps } from "react";
 
 /** Brand VibeForge Logo Mark */
 export function VibeForgeLogo({ size = 32, className = "" }: { size?: number; className?: string }) {
+  // Unique gradient ids per instance: with shared ids, a copy inside a hidden
+  // (display:none) sidebar owned the gradients and every visible logo rendered blank.
+  const uid = useId().replace(/:/g, "");
   return (
     <svg
       width={size}
@@ -13,43 +16,43 @@ export function VibeForgeLogo({ size = 32, className = "" }: { size?: number; cl
       aria-hidden="true"
     >
       <defs>
-        <linearGradient id="vfl-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+        <linearGradient id={`vfl-bg-${uid}`} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#0f3d36" />
           <stop offset="50%" stopColor="#0a2a25" />
           <stop offset="100%" stopColor="#051714" />
         </linearGradient>
-        <linearGradient id="vfl-stroke" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+        <linearGradient id={`vfl-stroke-${uid}`} x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#3dbfa4" stopOpacity="0.7" />
           <stop offset="100%" stopColor="#0d6e63" stopOpacity="0.25" />
         </linearGradient>
-        <linearGradient id="vfl-top" x1="32" y1="12" x2="32" y2="28" gradientUnits="userSpaceOnUse">
+        <linearGradient id={`vfl-top-${uid}`} x1="32" y1="12" x2="32" y2="28" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#8affea" />
           <stop offset="100%" stopColor="#34d3b0" />
         </linearGradient>
-        <linearGradient id="vfl-left" x1="16" y1="20" x2="32" y2="48" gradientUnits="userSpaceOnUse">
+        <linearGradient id={`vfl-left-${uid}`} x1="16" y1="20" x2="32" y2="48" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#2ea88f" />
           <stop offset="100%" stopColor="#0d6e63" />
         </linearGradient>
-        <linearGradient id="vfl-right" x1="48" y1="20" x2="32" y2="48" gradientUnits="userSpaceOnUse">
+        <linearGradient id={`vfl-right-${uid}`} x1="48" y1="20" x2="32" y2="48" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#5be3c7" />
           <stop offset="100%" stopColor="#1f8f78" />
         </linearGradient>
-        <linearGradient id="vfl-ember" x1="32" y1="26" x2="32" y2="38" gradientUnits="userSpaceOnUse">
+        <linearGradient id={`vfl-ember-${uid}`} x1="32" y1="26" x2="32" y2="38" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#ffd166" />
           <stop offset="100%" stopColor="#f77f00" />
         </linearGradient>
       </defs>
 
-      <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#vfl-bg)" />
-      <rect x="2.5" y="2.5" width="59" height="59" rx="13.5" stroke="url(#vfl-stroke)" strokeWidth="1" />
+      <rect x="2" y="2" width="60" height="60" rx="14" fill={`url(#vfl-bg-${uid})`} />
+      <rect x="2.5" y="2.5" width="59" height="59" rx="13.5" stroke={`url(#vfl-stroke-${uid})`} strokeWidth="1" />
 
       {/* Faceted milestone crystal */}
-      <path d="M32 13L46 21L32 29L18 21L32 13Z" fill="url(#vfl-top)" />
-      <path d="M18 21L32 29V49L18 40V21Z" fill="url(#vfl-left)" />
-      <path d="M46 21L32 29V49L46 40V21Z" fill="url(#vfl-right)" />
+      <path d="M32 13L46 21L32 29L18 21L32 13Z" fill={`url(#vfl-top-${uid})`} />
+      <path d="M18 21L32 29V49L18 40V21Z" fill={`url(#vfl-left-${uid})`} />
+      <path d="M46 21L32 29V49L46 40V21Z" fill={`url(#vfl-right-${uid})`} />
 
       {/* Inner forge ember */}
-      <path d="M32 24L37 32L32 39L27 32L32 24Z" fill="url(#vfl-ember)" />
+      <path d="M32 24L37 32L32 39L27 32L32 24Z" fill={`url(#vfl-ember-${uid})`} />
       <circle cx="32" cy="32" r="1.75" fill="#ffffff" />
       <path d="M26 47L32 51L38 47" stroke="#3dbfa4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" />
     </svg>
@@ -276,3 +279,22 @@ export function IconLock(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+
+/** Sun icon (light theme) */
+export function IconSun(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+    </svg>
+  );
+}
+
+/** Moon icon (dark theme) */
+export function IconMoon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}

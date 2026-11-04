@@ -176,7 +176,9 @@ pub fn scan_practices(root: &Path, milestone_id: &str) -> Vec<Finding> {
         (Regex::new(r"verify\s*=\s*False|rejectUnauthorized\s*:\s*false|InsecureSkipVerify\s*:\s*true").unwrap(), "high", "Security check switched off",
          "A safety check that protects the connection to another service is turned off, so traffic can be intercepted.",
          "Turn the check back on and fix the certificate/configuration problem instead."),
-        (Regex::new("(?i)(SELECT|INSERT|UPDATE|DELETE)[^\"]*(\\+|%s)").unwrap(), "high", "Database query built from text",
+        // Matches "SELECT ..." + userInput, %s and ${} templates. The old pattern
+        // stopped at the closing quote, so the classic `"..." + id` was missed.
+        (Regex::new(r#"(?i)\b(SELECT|INSERT|UPDATE|DELETE)\b.*(["'`]\s*\+|%s|\$\{|\.format\()"#).unwrap(), "high", "Database query built from text",
          "This database query is built by gluing text together. A user can change the query and read or delete data they should not see.",
          "Use parameterised queries ($1 / ? placeholders) so user text is always treated as data."),
         (Regex::new(r"DEBUG\s*=\s*[Tt]rue").unwrap(), "low", "Debug mode left on",
@@ -664,6 +666,16 @@ pub fn count_languages(root: &Path) -> Vec<String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn flags_sql_built_from_text() {
+        let dir = std::env::temp_dir().join(format!("vf-sql-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.js"), "db.query(\"SELECT * FROM users WHERE id = \" + req.query.id)\nconst q = `SELECT * FROM t WHERE id = ${id}`;\ndb.query('SELECT 1')\n").unwrap();
+        let found: Vec<_> = scan_practices(&dir, "m").into_iter().filter(|f| f.plain_title == "Database query built from text").collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(found.len(), 2, "both concatenation and template should be flagged, the constant query not");
+    }
 
     #[test]
     fn finding_ids_never_repeat() {
