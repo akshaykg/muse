@@ -24,6 +24,7 @@ cp "$K/narration-v2.json" "$O/narration.json"
 
 echo "== 2/3 Muse Git plan and assessments"
 D=$(mktemp -d)
+lsof -ti tcp:8089 2>/dev/null | xargs kill 2>/dev/null || true; sleep 1
 for z in recipe-box recipe-box-mobile ops-dashboard; do base64 -d < "$K/$z.zip.gz.b64" | gunzip > "$D/$z.zip"; done
 DATA_DIR="$D/data" PORT=8089 ./target/debug/vibeforge-server > "$D/server.log" 2>&1 &
 SRV=$!; trap 'kill $SRV 2>/dev/null || true' EXIT
