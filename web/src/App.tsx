@@ -50,6 +50,8 @@ import {
 } from "./components/icons";
 import { NotFoundScreen, ServerErrorScreen, ErrorBoundary } from "./components/ErrorScreens";
 import { AdminSettings, type AdminSettingsTab } from "./components/AdminSettings";
+import { AiReviewPanel, IconSparkles } from "./components/AiReview";
+import { AiSettings } from "./components/AiSettings";
 
 type Me = Awaited<ReturnType<typeof api.me>>;
 type View =
@@ -81,7 +83,7 @@ function parsePath(path: string): View {
     const p1 = parts[1] ?? "vulns";
     if (p1 === "settings") {
       const p2 = parts[2];
-      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso") {
+      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso" || p2 === "ai") {
         return { name: "admin", tab: `settings-${p2}` };
       }
       return { name: "admin", tab: "settings-upload" };
@@ -557,6 +559,14 @@ function Shell() {
                 hint={settingsCollapsed ? "SSO & provisioning" : undefined}
                 icon={<IconLock />}
                 onClick={() => setView({ name: "admin", tab: "settings-sso" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings-ai" || view.tab === "ai"}
+                label="AI review"
+                hint={settingsCollapsed ? "AI review" : undefined}
+                icon={<IconSparkles />}
+                onClick={() => setView({ name: "admin", tab: "settings-ai" })}
               />
             </nav>
           </aside>
@@ -1709,6 +1719,7 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
   const [fixing, setFixing] = useState<string | null>(null);
   const [loadError, setLoadError] = useState("");
   const toast = useToast();
+  const isPlatformAdmin = usePermission("admin:access");
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -1732,6 +1743,7 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
         items={[
           { key: "findings", label: `Findings (${open.length})` },
           { key: "fix", label: "Fix it" },
+          { key: "ai", label: "✦ AI review" },
           { key: "files", label: `Files (${data.files.length})` },
           { key: "todos", label: `To-dos & gaps (${data.todos.length})` },
           { key: "sbom", label: `SBOM (${data.sbom?.total ?? 0})` },
@@ -1862,6 +1874,15 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
         )}
 
         {tab === "sbom" && <SbomPanel milestoneId={milestoneId} sbom={data.sbom} />}
+
+        {tab === "ai" && (
+          <AiReviewPanel
+            milestoneId={milestoneId}
+            canPush={canPush}
+            isAdmin={isPlatformAdmin}
+            onOpenSettings={() => { window.history.pushState({}, "", "/admin/settings/ai"); window.dispatchEvent(new PopStateEvent("popstate")); }}
+          />
+        )}
 
         {tab === "shots" && (
           <Card className="p-4">
@@ -2256,7 +2277,8 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
     go?.({ name: "admin", tab: nextTab });
   };
 
-  const isSettingsTab = tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso";
+  const isAiTab = tab === "settings-ai" || tab === "ai";
+  const isSettingsTab = !isAiTab && (tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso");
   const activeSettingsSubTab: AdminSettingsTab =
     tab === "settings-access" || tab === "access" ? "access"
     : tab === "settings-policy" || tab === "policy" ? "policy"
@@ -2276,6 +2298,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {isSettingsTab && activeSettingsSubTab === "policy" && "Governance Policies & Space Quotas"}
           {isSettingsTab && activeSettingsSubTab === "notifications" && "Notifications & Alerting"}
           {isSettingsTab && activeSettingsSubTab === "sso" && "Single Sign-On (SSO) & SCIM"}
+          {isAiTab && "AI review"}
         </h2>
         <p className="mt-1 text-sm text-text-muted">
           {tab === "vulns" && `${vulns?.total_open ?? 0} open (${vulns?.critical ?? 0} fix-now) across every project. Contact leaves a to-do on their latest milestone.`}
@@ -2286,6 +2309,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {isSettingsTab && activeSettingsSubTab === "policy" && "Push security gates, software license blocklists (SPDX), vulnerability remediation SLAs, and space resource quotas."}
           {isSettingsTab && activeSettingsSubTab === "notifications" && "Automated high/critical incident webhooks and outgoing SMTP mail transfer credentials."}
           {isSettingsTab && activeSettingsSubTab === "sso" && "Enterprise identity provider federation with OpenID Connect (OIDC) and automated SCIM v2 directory synchronization."}
+          {isAiTab && "Meta Muse reads milestones and explains, in plain words, the secrets, security gaps and bad habits scanners miss. Choose the model and manage the API key."}
         </p>
         {error && <div className="mt-3"><Alert variant="error">{error}</Alert></div>}
       </div>
@@ -2294,7 +2318,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
       <div className="lg:hidden mt-4 overflow-x-auto pb-1">
         <Tabs
           ariaLabel="Settings sections"
-          value={isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
+          value={isAiTab ? "settings-ai" : isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
           onChange={selectTab}
           items={[
             { key: "vulns", label: `Vulns${vulns ? ` (${vulns.total_open})` : ""}` },
@@ -2305,6 +2329,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
             { key: "settings-policy", label: "Policy" },
             { key: "settings-notifications", label: "Alerts" },
             { key: "settings-sso", label: "SSO" },
+            { key: "settings-ai", label: "AI" },
           ]}
         />
       </div>
@@ -2415,6 +2440,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           </div>
         )}
 
+        {isAiTab && <AiSettings />}
         {isSettingsTab && (
           <AdminSettings
             tab={activeSettingsSubTab}
