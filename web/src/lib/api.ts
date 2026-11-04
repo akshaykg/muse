@@ -138,7 +138,7 @@ export const api = {
     req<{ id: string }>(`/api/v1/spaces/${spaceId}/projects`, { method: "POST", body: JSON.stringify({ name }) }),
   project: (id: string) => req<{ project: { id: string; name: string; slug: string; space_id: string; visibility?: string }; summary: { languages: string[]; milestones: number; open_findings: number; vulnerabilities: number; secrets: number; fix_now: number; fix_soon: number; good_to_know: number; last_push: string | null }; milestones: { id: string; seq_no: number; label: string; scan_status: string; languages: string[]; created_at: string; findings: number; screenshots: string[] }[] }>(`/api/v1/projects/${id}`),
   milestone: (id: string) => req<{
-    milestone: { id: string; label: string; scan_status: string; created_at: string; screenshots: string[]; manifest: { about: string; stage: string } };
+    milestone: { id: string; seq_no: number; label: string; scan_status: string; created_at: string; screenshots: string[]; manifest: { about: string; stage: string } };
     files: { path: string; size_bytes: number }[];
     findings: { id: string; kind: string; severity: string; plain_title: string; plain_explain: string; fix_text: string; file_path: string | null; status: string; cve_id: string | null; package: string | null; current_version: string | null; fixed_version: string | null; cvss_score: number | null; cvss_vector: string | null }[];
     todos: { id: string; body: string; done: boolean; source: string }[];
@@ -191,6 +191,8 @@ export const api = {
   },
 
   downloadSbom: (milestoneId: string) => download(`/api/v1/milestones/${milestoneId}/sbom`, "SBOM.json", "Could not download the SBOM."),
+  downloadMilestone: (milestoneId: string, filename: string) =>
+    download(`/api/v1/milestones/${milestoneId}/download`, filename, "Could not download this milestone."),
 
   downloadExport: (milestoneId: string, format: "cyclonedx" | "spdx") =>
     download(`/api/v1/milestones/${milestoneId}/export/${format}`, format === "cyclonedx" ? "SBOM.cyclonedx.json" : "SBOM.spdx.json", `Could not export ${format}.`),
