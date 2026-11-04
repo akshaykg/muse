@@ -188,6 +188,7 @@ function Shell() {
   const [settingsCollapsed, setSettingsCollapsed] = useState(() => localStorage.getItem("vf_settings_collapsed") === "1");
   const [adminCounts, setAdminCounts] = useState<{ vulns?: number; users?: number; groups?: number }>({});
   const [theme, toggleTheme] = useTheme();
+  const [navProjects, setNavProjects] = useState<NavProject[]>([]);
 
   const toggleSettingsCollapsed = useCallback(() => {
     setSettingsCollapsed((v) => {
@@ -195,6 +196,12 @@ function Shell() {
       return !v;
     });
   }, []);
+
+  // Projects for the left nav; refreshed on navigation so new projects show up.
+  useEffect(() => {
+    if (!me) return;
+    void api.myProjects().then(setNavProjects).catch(() => {});
+  }, [me, view.name, (view as { id?: string }).id]);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -361,52 +368,7 @@ function Shell() {
             )}
           </div>
 
-          <nav aria-label="Spaces" className="flex-1 overflow-y-auto p-2">
-            <SideItem collapsed={collapsed} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => setView({ name: "spaces" })} />
-            {!collapsed && <p className="px-3 pb-1.5 pt-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted/80">Your spaces</p>}
-            <div className="space-y-0.5">
-              {me.spaces.map((sp) => (
-                <SideItem
-                  key={sp.id}
-                  collapsed={collapsed}
-                  active={view.name === "space" && view.id === sp.id}
-                  label={sp.name}
-                  icon={<span className="text-xs font-bold">{sp.name.slice(0, 1).toUpperCase()}</span>}
-                  hint={collapsed ? sp.name : `${sp.role}`}
-                  onClick={() => setView({ name: "space", id: sp.id, label: sp.name })}
-                />
-              ))}
-            </div>
-            {perms.isAdmin && (
-              <SideItem
-                collapsed={collapsed}
-                active={false}
-                label="New space"
-                icon={<IconPlus />}
-                onClick={() => {
-                  setView({ name: "spaces" });
-                  window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
-                }}
-              />
-            )}
-
-            <div className="my-2 border-t border-border" />
-            <SideItem collapsed={collapsed} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => setView({ name: "marketplace" })} />
-          </nav>
-
-          {/* App settings moved to bottom of left nav — single button */}
-          {perms.isAdmin && (
-            <div className="border-t border-border p-2">
-              <SideItem
-                collapsed={collapsed}
-                active={view.name === "admin" && (view.tab.startsWith("settings-") || view.tab === "settings")}
-                label="App settings"
-                icon={<IconSettings />}
-                hint={collapsed ? "App settings" : undefined}
-                onClick={() => setView({ name: "admin", tab: "settings-upload" })}
-              />
-            </div>
-          )}
+          <NavBody collapsed={collapsed} view={view} me={me} projects={navProjects} isAdmin={perms.isAdmin} go={setView} />
 
           {!collapsed && (
             <div
@@ -604,54 +566,7 @@ function Shell() {
                 </button>
               </div>
 
-              <nav aria-label="Mobile spaces" className="flex-1 overflow-y-auto py-3 space-y-1">
-                <SideItem collapsed={false} active={view.name === "spaces"} label="All spaces" icon={<IconSpaces />} onClick={() => { setView({ name: "spaces" }); setMobileNavOpen(false); }} />
-                <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Your spaces</p>
-                <div className="space-y-0.5">
-                  {me.spaces.map((sp) => (
-                    <SideItem
-                      key={sp.id}
-                      collapsed={false}
-                      active={view.name === "space" && view.id === sp.id}
-                      label={sp.name}
-                      icon={<span className="text-xs font-bold">{sp.name.slice(0, 1).toUpperCase()}</span>}
-                      hint={sp.role}
-                      onClick={() => { setView({ name: "space", id: sp.id, label: sp.name }); setMobileNavOpen(false); }}
-                    />
-                  ))}
-                </div>
-                {perms.isAdmin && (
-                  <SideItem
-                    collapsed={false}
-                    active={false}
-                    label="New space"
-                    icon={<IconPlus />}
-                    onClick={() => {
-                      setView({ name: "spaces" });
-                      setMobileNavOpen(false);
-                      window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50);
-                    }}
-                  />
-                )}
-                <div className="my-2 border-t border-border" />
-                <SideItem collapsed={false} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => { setView({ name: "marketplace" }); setMobileNavOpen(false); }} />
-              </nav>
-
-              {/* Mobile App settings at bottom of left nav */}
-              {perms.isAdmin && (
-                <div className="border-t border-border pt-2">
-                  <SideItem
-                    collapsed={false}
-                    active={view.name === "admin" && (view.tab.startsWith("settings-") || view.tab === "settings")}
-                    label="App settings"
-                    icon={<IconSettings />}
-                    onClick={() => {
-                      setView({ name: "admin", tab: "settings-upload" });
-                      setMobileNavOpen(false);
-                    }}
-                  />
-                </div>
-              )}
+              <NavBody collapsed={false} view={view} me={me} projects={navProjects} isAdmin={perms.isAdmin} go={(v) => { setView(v); setMobileNavOpen(false); }} />
             </div>
           </div>
         )}
@@ -744,6 +659,180 @@ function Shell() {
         </div>
       </div>
     </PermissionsProvider>
+  );
+}
+
+type NavProject = Awaited<ReturnType<typeof api.myProjects>>[number];
+
+/** Stable colour per space, from theme tokens only. */
+const SPACE_TONES = [
+  "bg-primary/15 text-primary",
+  "bg-info/15 text-info",
+  "bg-warning/15 text-warning",
+  "bg-success/15 text-success",
+  "bg-error/12 text-error",
+];
+function spaceTone(id: string): string {
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return SPACE_TONES[h % SPACE_TONES.length];
+}
+
+function SpaceGlyph({ id, size = 28 }: { id: string; size?: number }) {
+  return (
+    <span aria-hidden className={`flex shrink-0 items-center justify-center rounded-md ${spaceTone(id)}`} style={{ width: size, height: size }}>
+      <svg width={size * 0.55} height={size * 0.55} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2 2 7l10 5 10-5-10-5z" /><path d="m2 17 10 5 10-5" /><path d="m2 12 10 5 10-5" />
+      </svg>
+    </span>
+  );
+}
+
+/** Project's own favicon in the nav; the default package icon when it has none. */
+function NavProjectIcon({ projectId, name }: { projectId: string; name: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    let made: string | null = null;
+    void api.faviconUrl(projectId).then((u) => { made = u; if (live) setUrl(u); }).catch(() => {});
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [projectId]);
+  if (!url) return <DefaultProjectIcon name={name} size={20} className="!rounded-[5px] !shadow-none" />;
+  return <img src={url} alt="" className="h-5 w-5 shrink-0 rounded-[5px] object-contain" />;
+}
+
+function NavSection({ label, action, collapsed }: { label: string; action?: ReactNode; collapsed: boolean }) {
+  if (collapsed) return <div className="mx-3 my-3 border-t border-border" />;
+  return (
+    <div className="flex items-center justify-between px-2.5 pb-1 pt-5">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted/80">{label}</span>
+      {action}
+    </div>
+  );
+}
+
+function NavBody({ collapsed, view, me, projects, isAdmin, go }: {
+  collapsed: boolean;
+  view: View;
+  me: Me;
+  projects: NavProject[];
+  isAdmin: boolean;
+  go: (v: View) => void;
+}) {
+  const activeProject = view.name === "project" ? projects.find((p) => p.id === view.id) : undefined;
+  const activeSpaceId = view.name === "space" ? view.id : activeProject?.space_id;
+  const [open, setOpen] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("vf_nav_open") ?? "{}"); } catch { return {}; }
+  });
+  const toggle = (id: string) => setOpen((o) => {
+    const next = { ...o, [id]: !(o[id] ?? id === activeSpaceId) };
+    try { localStorage.setItem("vf_nav_open", JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
+  const inSettings = view.name === "admin";
+
+  return (
+    <>
+      <nav aria-label="Main" className="flex-1 overflow-y-auto px-2 pb-3 pt-2">
+        <div className="space-y-0.5">
+          <SideItem collapsed={collapsed} active={view.name === "spaces"} label="Home" icon={<IconSpaces />} onClick={() => go({ name: "spaces" })} />
+          <SideItem collapsed={collapsed} active={view.name === "marketplace"} label="Marketplace" icon={<IconMarketplace />} onClick={() => go({ name: "marketplace" })} />
+        </div>
+
+        <NavSection
+          collapsed={collapsed}
+          label="Spaces"
+          action={isAdmin ? (
+            <button
+              type="button"
+              aria-label="New space"
+              title="New space"
+              onClick={() => { go({ name: "spaces" }); window.setTimeout(() => window.dispatchEvent(new Event("vf:new-space")), 50); }}
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text-muted transition hover:bg-text/[0.06] hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <IconPlus width={14} height={14} />
+            </button>
+          ) : undefined}
+        />
+
+        {me.spaces.length === 0 && !collapsed && (
+          <p className="px-2.5 py-2 text-xs text-text-muted">No spaces yet. {isAdmin ? "Create one with +." : "Ask an admin to add you."}</p>
+        )}
+
+        <ul className="space-y-0.5">
+          {me.spaces.map((sp) => {
+            const items = projects.filter((p) => p.space_id === sp.id);
+            const expanded = open[sp.id] ?? sp.id === activeSpaceId;
+            const active = view.name === "space" && view.id === sp.id;
+            if (collapsed) {
+              return (
+                <li key={sp.id}>
+                  <button type="button" title={sp.name} aria-label={sp.name} aria-current={active || undefined}
+                    onClick={() => go({ name: "space", id: sp.id, label: sp.name })}
+                    className={`flex w-full cursor-pointer justify-center rounded-md py-1.5 transition ${active || sp.id === activeSpaceId ? "bg-primary/10" : "hover:bg-text/[0.05]"}`}>
+                    <SpaceGlyph id={sp.id} />
+                  </button>
+                </li>
+              );
+            }
+            return (
+              <li key={sp.id}>
+                <div className={`group flex items-center rounded-md transition-colors duration-fast ${active ? "bg-primary/10" : "hover:bg-text/[0.05]"}`}>
+                  <button
+                    type="button"
+                    aria-label={expanded ? `Collapse ${sp.name}` : `Expand ${sp.name}`}
+                    aria-expanded={expanded}
+                    onClick={() => toggle(sp.id)}
+                    className="flex h-9 w-6 shrink-0 cursor-pointer items-center justify-center text-text-muted/70 hover:text-text"
+                  >
+                    <IconChevronRight width={13} height={13} className={`transition-transform duration-fast ${expanded ? "rotate-90" : ""}`} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-current={active || undefined}
+                    onClick={() => go({ name: "space", id: sp.id, label: sp.name })}
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 py-1.5 pr-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-md"
+                  >
+                    <SpaceGlyph id={sp.id} size={24} />
+                    <span className={`min-w-0 flex-1 truncate ${active ? "font-semibold text-text" : "font-medium text-text"}`}>{sp.name}</span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-text-muted">{items.length}</span>
+                  </button>
+                </div>
+                {expanded && (
+                  <ul className="relative mb-1 ml-[22px] mt-0.5 space-y-px border-l border-border pl-2">
+                    {items.length === 0 && <li className="px-2 py-1.5 text-xs text-text-muted">No projects yet</li>}
+                    {items.map((p) => {
+                      const on = activeProject?.id === p.id;
+                      return (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            aria-current={on || undefined}
+                            onClick={() => go({ name: "project", id: p.id })}
+                            className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${on ? "bg-primary/10 font-semibold text-text" : "text-text-muted hover:bg-text/[0.05] hover:text-text"}`}
+                          >
+                            <NavProjectIcon projectId={p.id} name={p.name} />
+                            <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                            {p.milestones > 0 && <span className="shrink-0 text-[11px] tabular-nums text-text-muted/80" title={`${p.milestones} milestones`}>#{p.milestones}</span>}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
+      <div className="space-y-0.5 border-t border-border p-2">
+        <SideItem collapsed={collapsed} active={view.name === "profile"} label="Connect your AI tool" icon={<IconKey />} onClick={() => go({ name: "profile" })} />
+        {isAdmin && (
+          <SideItem collapsed={collapsed} active={inSettings} label="Settings" icon={<IconSettings />} onClick={() => go({ name: "admin", tab: "settings-upload" })} />
+        )}
+      </div>
+    </>
   );
 }
 
