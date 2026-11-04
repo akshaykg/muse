@@ -50,6 +50,9 @@ import {
 } from "./components/icons";
 import { NotFoundScreen, ServerErrorScreen, ErrorBoundary } from "./components/ErrorScreens";
 import { AdminSettings, type AdminSettingsTab } from "./components/AdminSettings";
+import { AiReviewPanel, IconSparkles } from "./components/AiReview";
+import { AiSettings } from "./components/AiSettings";
+import { MilestoneShowcase } from "./components/Showcase";
 
 type Me = Awaited<ReturnType<typeof api.me>>;
 type View =
@@ -81,7 +84,7 @@ function parsePath(path: string): View {
     const p1 = parts[1] ?? "vulns";
     if (p1 === "settings") {
       const p2 = parts[2];
-      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso") {
+      if (p2 === "upload" || p2 === "access" || p2 === "policy" || p2 === "notifications" || p2 === "sso" || p2 === "ai") {
         return { name: "admin", tab: `settings-${p2}` };
       }
       return { name: "admin", tab: "settings-upload" };
@@ -557,6 +560,14 @@ function Shell() {
                 hint={settingsCollapsed ? "SSO & provisioning" : undefined}
                 icon={<IconLock />}
                 onClick={() => setView({ name: "admin", tab: "settings-sso" })}
+              />
+              <SideItem
+                collapsed={settingsCollapsed}
+                active={view.tab === "settings-ai" || view.tab === "ai"}
+                label="AI review"
+                hint={settingsCollapsed ? "AI review" : undefined}
+                icon={<IconSparkles />}
+                onClick={() => setView({ name: "admin", tab: "settings-ai" })}
               />
             </nav>
           </aside>
@@ -1536,71 +1547,97 @@ function ProjectBody({ data, role, selected, setSelected, showPush, setShowPush,
         />
       )}
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[280px_1fr]">
-        <div>
-          <div className="flex items-baseline gap-2">
-            <h3 className="font-serif text-lg font-bold">History</h3>
-            <span className="text-xs text-text-muted">{data.milestones.length} milestone{data.milestones.length === 1 ? "" : "s"}</span>
-          </div>
-          {data.milestones.length > 0 ? (
-            <ol className="relative mt-4">
-              <span aria-hidden className="absolute bottom-3 left-[13px] top-3 w-px bg-border" />
-              {[...data.milestones].reverse().map((m, idx) => {
-                const active = selected === m.id;
-                const latest = idx === 0;
-                return (
-                  <li key={m.id} className="relative pb-3 pl-9 last:pb-0">
-                    <span
-                      aria-hidden
-                      className={`absolute left-[7px] top-[18px] h-[13px] w-[13px] rounded-full border-[2.5px] transition duration-fast ${
-                        active ? "border-primary bg-primary" : m.findings > 0 ? "border-error/70 bg-surface" : "border-success/70 bg-surface"
-                      }`}
-                    />
-                    <button
-                      type="button"
-                      aria-current={active || undefined}
-                      onClick={() => setSelected(m.id)}
-                      className={`w-full rounded-lg border p-3.5 text-left transition duration-normal ease-standard focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.99] ${
-                        active
-                          ? "border-primary bg-primary/5 shadow-raised"
-                          : "border-border bg-surface shadow-surface hover:-translate-y-px hover:border-primary/50 hover:shadow-raised"
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-bold ${active ? "bg-primary text-primary-fg" : "bg-background text-text-muted"}`}>
-                          #{m.seq_no}
-                        </span>
-                        {latest && <Badge tone="primary">Latest</Badge>}
-                        <span className="ml-auto text-[11px] text-text-muted">
-                          {new Date(m.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
-                          {" · "}
-                          {new Date(m.created_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                      </span>
-                      <span className="mt-2 line-clamp-2 block text-sm font-medium leading-snug">{m.label}</span>
-                      <span className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                        {m.findings > 0 ? <Badge tone="danger">{m.findings} to fix</Badge> : <Badge tone="success">✓ Clean scan</Badge>}
-                        {m.languages?.length > 0 && <Badge>{m.languages.join(" · ")}</Badge>}
-                        <span aria-hidden className={`ml-auto text-xs font-medium text-primary transition duration-fast ${active ? "opacity-100" : "opacity-0"}`}>
-                          Viewing →
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-          ) : (
-            <div className="mt-3"><EmptyState title="No milestones yet" hint="Push one with the skill or the button above." /></div>
-          )}
-        </div>
-        <div>
+      <div className="mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 lg:order-1 order-2">
           {selected
-            ? <MilestoneDetail milestoneId={selected} projectId={projectId} canPush={canPush} onChanged={load} />
+            ? <MilestoneDetail milestoneId={selected} projectId={projectId} projectName={data.project.name} canPush={canPush} onChanged={load} />
             : <EmptyState title="Pick a milestone" hint="Its files, findings and screenshots appear here." />}
         </div>
+        <aside aria-labelledby="history-title" className="order-1 lg:order-2 lg:sticky lg:top-20">
+          <MilestoneHistory milestones={data.milestones} selected={selected} onSelect={setSelected} />
+        </aside>
       </div>
     </section>
+  );
+}
+
+/** "Milestone pushed 2026-11-04T19:35:05Z" → "Pushed Nov 4, 7:35 PM"; other labels unchanged. */
+function milestoneTitle(label: string): string {
+  const m = label.match(/^Milestone pushed (\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2}))/);
+  if (!m) return label;
+  const d = new Date(m[1]);
+  if (Number.isNaN(d.getTime())) return label;
+  return `Pushed ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+
+function timeAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function MilestoneHistory({ milestones, selected, onSelect }: {
+  milestones: { id: string; seq_no: number; label: string; created_at: string; findings: number; languages: string[] }[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const list = [...milestones].reverse();
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between gap-2 border-b border-border/70 px-4 py-3">
+        <h3 id="history-title" className="text-sm font-semibold text-text">Version history</h3>
+        <span className="rounded-full bg-background px-2 py-0.5 text-[11px] font-semibold tabular-nums text-text-muted">{milestones.length}</span>
+      </div>
+      {list.length === 0 ? (
+        <div className="p-4"><EmptyState title="No milestones yet" hint="Push one with the skill or the button above." /></div>
+      ) : (
+        <ol className="relative max-h-[min(70vh,640px)] overflow-y-auto p-2">
+          {list.map((m, idx) => {
+            const active = selected === m.id;
+            const latest = idx === 0;
+            const last = idx === list.length - 1;
+            return (
+              <li key={m.id} className="relative">
+                {!last && <span aria-hidden className="absolute bottom-0 left-[22px] top-7 w-px bg-border" />}
+                <button
+                  type="button"
+                  aria-current={active || undefined}
+                  onClick={() => onSelect(m.id)}
+                  className={`group relative flex w-full cursor-pointer items-start gap-3 rounded-md px-2.5 py-2.5 text-left transition duration-fast ease-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:scale-[0.99] ${
+                    active ? "bg-primary/8" : "hover:bg-background"
+                  }`}
+                >
+                  <span
+                    aria-hidden
+                    className={`relative z-[1] mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums ring-4 ring-surface transition duration-fast ${
+                      active ? "bg-primary text-primary-fg" : m.findings > 0 ? "bg-error/12 text-error" : "bg-success/12 text-success"
+                    }`}
+                  >
+                    {m.seq_no}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`truncate text-sm font-medium ${active ? "text-primary" : "text-text"}`} title={m.label}>{milestoneTitle(m.label)}</span>
+                      {latest && <span className="shrink-0 rounded-full bg-primary/12 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-primary">Latest</span>}
+                    </span>
+                    <span className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted">
+                      <span className={`h-1.5 w-1.5 rounded-full ${m.findings > 0 ? "bg-error" : "bg-success"}`} aria-hidden />
+                      <span>{m.findings > 0 ? `${m.findings} to fix` : "Clean"}</span>
+                      <span aria-hidden>·</span>
+                      <time dateTime={m.created_at} title={new Date(m.created_at).toLocaleString()}>{timeAgo(m.created_at)}</time>
+                    </span>
+                  </span>
+                  {active && <span aria-hidden className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </Card>
   );
 }
 
@@ -1698,17 +1735,17 @@ function UploadBox({ projectId, onDone, onCancel }: { projectId: string; onDone:
 
 type MileData = Awaited<ReturnType<typeof api.milestone>>;
 
-function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { milestoneId: string; projectId: string; canPush: boolean; onChanged: () => void }) {
+function MilestoneDetail({ milestoneId, projectId, projectName = "", canPush, onChanged }: { milestoneId: string; projectId: string; projectName?: string; canPush: boolean; onChanged: () => void }) {
   const [tab, setTab] = useState("findings");
   const [data, setData] = useState<MileData | null>(null);
   const [openFile, setOpenFile] = useState<{ path: string; text: string } | null>(null);
   const [myProjects, setMyProjects] = useState<Awaited<ReturnType<typeof api.myProjects>>>([]);
   const [forkTo, setForkTo] = useState("");
   const [forking, setForking] = useState(false);
-  const [shotBusy, setShotBusy] = useState(false);
   const [fixing, setFixing] = useState<string | null>(null);
   const [loadError, setLoadError] = useState("");
   const toast = useToast();
+  const isPlatformAdmin = usePermission("admin:access");
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -1725,6 +1762,13 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
 
   return (
     <div>
+      <MilestoneShowcase
+        milestoneId={milestoneId}
+        projectName={projectName}
+        shots={shots}
+        canPush={canPush}
+        onShotsChanged={async () => { await load(); onChanged(); }}
+      />
       <Tabs
         ariaLabel="Milestone"
         value={tab}
@@ -1732,10 +1776,10 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
         items={[
           { key: "findings", label: `Findings (${open.length})` },
           { key: "fix", label: "Fix it" },
+          { key: "ai", label: "✦ AI review" },
           { key: "files", label: `Files (${data.files.length})` },
           { key: "todos", label: `To-dos & gaps (${data.todos.length})` },
           { key: "sbom", label: `SBOM (${data.sbom?.total ?? 0})` },
-          { key: "shots", label: `Screenshots (${shots.length})` },
         ]}
       />
       <div role="tabpanel" className="mt-4">
@@ -1863,27 +1907,15 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
 
         {tab === "sbom" && <SbomPanel milestoneId={milestoneId} sbom={data.sbom} />}
 
-        {tab === "shots" && (
-          <Card className="p-4">
-            <p className="text-sm text-text-muted">Remember how this milestone looked. Screenshots stay with this version in History.</p>
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {shots.map((k) => <ShotThumb key={k} blobKey={k} />)}
-            </div>
-            {shots.length === 0 && <p className="mt-3 text-sm text-text-muted">No screenshots yet.</p>}
-            {canPush && <form className="mt-4 flex flex-wrap gap-2" onSubmit={async (e) => {
-              e.preventDefault();
-              const file = e.currentTarget.querySelector<HTMLInputElement>("input[type=file]")?.files?.[0];
-              if (!file) { toast.error("Choose an image first."); return; }
-              setShotBusy(true);
-              try { await api.addScreenshot(milestoneId, file); await load(); onChanged(); toast.success("Screenshot attached."); }
-              catch (err) { toast.error(err instanceof Error ? err.message : "Upload failed."); }
-              finally { setShotBusy(false); }
-            }}>
-              <Input type="file" accept="image/*" aria-label="Screenshot image" className="w-auto" />
-              <Button type="submit" busy={shotBusy}>Attach screenshot</Button>
-            </form>}
-          </Card>
+        {tab === "ai" && (
+          <AiReviewPanel
+            milestoneId={milestoneId}
+            canPush={canPush}
+            isAdmin={isPlatformAdmin}
+            onOpenSettings={() => { window.history.pushState({}, "", "/admin/settings/ai"); window.dispatchEvent(new PopStateEvent("popstate")); }}
+          />
         )}
+
       </div>
 
       {canPush && myProjects.some((p) => p.id !== projectId) && <Card className="mt-6 p-5">
@@ -1905,26 +1937,6 @@ function MilestoneDetail({ milestoneId, projectId, canPush, onChanged }: { miles
         </form>
       </Card>}
     </div>
-  );
-}
-
-/** Screenshot preview, fetched with the session token (an <img src> can't send it). */
-function ShotThumb({ blobKey }: { blobKey: string }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    let made: string | null = null;
-    void api.blobUrl(blobKey).then((u) => { made = u; if (live) setUrl(u); });
-    return () => { live = false; if (made) URL.revokeObjectURL(made); };
-  }, [blobKey]);
-  const name = blobKey.split("/").pop()?.replace(/^[0-9a-f]{64}-/, "") ?? "screenshot";
-  return (
-    <a href={url ?? undefined} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded-md border border-border bg-background">
-      {url
-        ? <img src={url} alt={name} className="aspect-video w-full object-cover transition-transform duration-normal group-hover:scale-[1.02]" />
-        : <Skeleton className="aspect-video w-full rounded-none" />}
-      <span className="block truncate px-2 py-1.5 text-xs text-text-muted">{name}</span>
-    </a>
   );
 }
 
@@ -2256,7 +2268,8 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
     go?.({ name: "admin", tab: nextTab });
   };
 
-  const isSettingsTab = tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso";
+  const isAiTab = tab === "settings-ai" || tab === "ai";
+  const isSettingsTab = !isAiTab && (tab.startsWith("settings-") || tab === "settings" || tab === "upload" || tab === "access" || tab === "policy" || tab === "notifications" || tab === "sso");
   const activeSettingsSubTab: AdminSettingsTab =
     tab === "settings-access" || tab === "access" ? "access"
     : tab === "settings-policy" || tab === "policy" ? "policy"
@@ -2276,6 +2289,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {isSettingsTab && activeSettingsSubTab === "policy" && "Governance Policies & Space Quotas"}
           {isSettingsTab && activeSettingsSubTab === "notifications" && "Notifications & Alerting"}
           {isSettingsTab && activeSettingsSubTab === "sso" && "Single Sign-On (SSO) & SCIM"}
+          {isAiTab && "AI review"}
         </h2>
         <p className="mt-1 text-sm text-text-muted">
           {tab === "vulns" && `${vulns?.total_open ?? 0} open (${vulns?.critical ?? 0} fix-now) across every project. Contact leaves a to-do on their latest milestone.`}
@@ -2286,6 +2300,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           {isSettingsTab && activeSettingsSubTab === "policy" && "Push security gates, software license blocklists (SPDX), vulnerability remediation SLAs, and space resource quotas."}
           {isSettingsTab && activeSettingsSubTab === "notifications" && "Automated high/critical incident webhooks and outgoing SMTP mail transfer credentials."}
           {isSettingsTab && activeSettingsSubTab === "sso" && "Enterprise identity provider federation with OpenID Connect (OIDC) and automated SCIM v2 directory synchronization."}
+          {isAiTab && "Meta Muse reads milestones and explains, in plain words, the secrets, security gaps and bad habits scanners miss. Choose the model and manage the API key."}
         </p>
         {error && <div className="mt-3"><Alert variant="error">{error}</Alert></div>}
       </div>
@@ -2294,7 +2309,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
       <div className="lg:hidden mt-4 overflow-x-auto pb-1">
         <Tabs
           ariaLabel="Settings sections"
-          value={isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
+          value={isAiTab ? "settings-ai" : isSettingsTab ? `settings-${activeSettingsSubTab}` : tab}
           onChange={selectTab}
           items={[
             { key: "vulns", label: `Vulns${vulns ? ` (${vulns.total_open})` : ""}` },
@@ -2305,6 +2320,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
             { key: "settings-policy", label: "Policy" },
             { key: "settings-notifications", label: "Alerts" },
             { key: "settings-sso", label: "SSO" },
+            { key: "settings-ai", label: "AI" },
           ]}
         />
       </div>
@@ -2415,6 +2431,7 @@ function Admin({ initialTab, go, onCountsUpdate, meId }: {
           </div>
         )}
 
+        {isAiTab && <AiSettings />}
         {isSettingsTab && (
           <AdminSettings
             tab={activeSettingsSubTab}

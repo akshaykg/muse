@@ -38,6 +38,33 @@ In production the server also serves `web/dist` (`npm run build`) and
 Every admin-editable value (zip limits, token TTLs, session length, SMTP,
 public URL) lives under **Admin → Settings** and takes effect immediately.
 
+## AI review (Meta Muse)
+
+Every milestone has an **✦ AI review** tab. Meta Muse reads the code and lists,
+in plain words, what pattern scanners and OSV miss: secrets hiding in context
+(keys in frontend code, passwords in logs), missing auth checks, injection,
+unsafe defaults and bad habits. Each item has "why it matters", fix steps and a
+ready-to-paste prompt for your AI coding tool, plus one "fix everything" prompt.
+
+- **Set up:** Admin → Settings → **AI review**. Paste a Meta Model API key
+  (dev.meta.ai), press *Test connection*, pick a model (Muse Spark 1.3 by
+  default; 1.2, 1.1, Wonder 1.0, Contributor variants or any id), save.
+  Or start the server with `MODEL_API_KEY=... cargo run -p api`.
+- **Safety:** secret-looking values are replaced with `[MASKED:kind:Nchars]`
+  before code leaves the server; lockfiles, builds and binaries are never
+  sent. The key is stored sealed (AES-GCM) in `data/db.json`, shown only as
+  `••••last4`, and never sent to browsers. Never commit a key: `.env` and
+  `data/` are git-ignored.
+- **Who can run it:** Owners and Coders of the space. Results are saved per milestone.
+- **How it looks:** screenshots are shown big at the top of every milestone
+  (not in a tab). When a push has no screenshot, Muse reads the screen code
+  about 20 s later and sketches the app as static HTML, shown in a sandboxed
+  iframe (no scripts, CSP `default-src 'none'`) and labelled "AI preview".
+  Turn it off under Admin → AI review → Screenshots; "Sketch it with Muse"
+  makes one on demand.
+- **Provider:** any OpenAI-compatible `/chat/completions` endpoint
+  (Advanced → provider URL; default `https://api.meta.ai/v1`).
+
 ## Layout
 
 ```

@@ -40,6 +40,9 @@ pub struct Store {
     pub password_resets: Vec<PasswordReset>,
     pub settings: Settings,
     pub audit: Vec<AuditEntry>,
+    /// AI review config + results (see ai.rs).
+    #[serde(default)]
+    pub ai: ai::AiStore,
 }
 
 pub struct AppState {
@@ -384,6 +387,8 @@ macro_rules! auth {
         }
     };
 }
+
+mod ai;
 
 fn err(status: StatusCode, msg: &str) -> Response {
     (status, Json(serde_json::json!({ "error": msg }))).into_response()
@@ -1272,6 +1277,7 @@ async fn push_milestone(State(state): State<Shared>, headers: HeaderMap, Path(pr
     let _ = tokio::fs::remove_dir_all(&tmp).await;
     persist(&state).await;
     audit(&state, &a.0.id, "milestone:push", "milestone", &milestone_id, "success").await;
+    ai::after_push(&state, &milestone_id, &a.0.id).await;
     let threshold_hit = {
         let rank = |sev: &str| match sev { "critical" => 4, "high" => 3, "medium" => 2, _ => 1 };
         let min = rank(&settings.block_severity);
@@ -2205,6 +2211,7 @@ async fn main() {
         .route("/api/v1/projects/{id}/visibility", post(set_visibility))
         .route("/api/v1/registry", get(registry))
         .route("/api/v1/findings/{id}/apply-fix", post(apply_fix))
+        .merge(ai::routes())
         .layer(tower_http::cors::CorsLayer::permissive());
     if skill_dir.exists() {
         app = app.nest_service("/skill", tower_http::services::ServeDir::new(skill_dir));

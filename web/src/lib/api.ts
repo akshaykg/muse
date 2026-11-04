@@ -80,7 +80,7 @@ function failure(res: Response, data: { error?: string; message?: string } | nul
   return new Error(data?.error ?? data?.message ?? `${fallback} (${res.status})`);
 }
 
-async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string> ?? {}) };
   if (init.body && typeof init.body === "string") headers["Content-Type"] = "application/json";
   const res = await authedFetch(path, { ...init, headers });
