@@ -1,7 +1,11 @@
 [
   {
+    "id": "00-problem",
+    "text": "AI writes code in minutes. But one bad prompt can wipe out a working app, companies can't see what vibe coders build, and there's no easy way to find what's wrong, or how to fix it."
+  },
+  {
     "id": "01-intro",
-    "text": "Your AI writes code in minutes. VibeForge keeps every version safe, with Meta Muse AI reviewing every milestone."
+    "text": "VibeForge fixes that. Every version is saved as a milestone, your AI pushes through MCP, teams see every project, and Meta Muse AI finds what's wrong and how to fix it."
   },
   {
     "id": "02-spaces",
