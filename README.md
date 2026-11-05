@@ -53,6 +53,25 @@ Other clients use the same URL and header in their `mcp.json`. Tools:
 Every admin-editable value (zip limits, token TTLs, session length, SMTP,
 public URL) lives under **Admin → Settings** and takes effect immediately.
 
+## Git setup (with Meta Muse)
+
+Milestones are the big saves; Git keeps every small step. VibeForge asks people
+to use both and writes the fiddly parts for them.
+
+- **Admin → Settings → Git:** turn the "Use Git with this project" prompt on or
+  off, set the team's Git host, org URL, default branch and HTTPS/SSH, choose the
+  hooks every project gets (block secrets, block large files, lint/format, tests
+  before push, clear commit messages, no direct pushes to `main`), extra team
+  pre-commit commands and the lines every `.gitignore` must have.
+- **Profile → Your Git details:** name, email and host username, used to write
+  `git config` and remote URLs you can paste as-is.
+- **Milestone → Git tab:** a `.gitignore` and `.githooks/` made for that project,
+  the files it keeps out of Git, secrets that would be committed today, and one
+  `vibeforge-git-setup.sh` that sets it all up. "Tailor with Muse" sends only the
+  file list and a few masked manifest files to the AI review model (same key).
+  Muse proposes lint/format/test commands; VibeForge builds the hook scripts itself
+  and refuses commands with `;`, redirects, `$(` or downloads.
+
 ## AI review (Meta Muse)
 
 Every milestone has an **✦ AI review** tab. Meta Muse reads the code and lists,
