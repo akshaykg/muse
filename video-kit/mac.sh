@@ -8,11 +8,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${MODEL_API_KEY:?set MODEL_API_KEY in the environment}"
 K=video-kit; O=video-assets; B=http://localhost:8089
-rm -rf "$O"; mkdir -p "$O/audio"
+if [ "${SKIP_POLLY:-}" = 1 ]; then rm -f "$O"/*.json "$O"/server.log; else rm -rf "$O"; fi; mkdir -p "$O/audio"
 [ -x target/debug/vibeforge-server ] && [ -f web/dist/index.html ] || { echo "Build first: (cd web && npm ci && npm run build) && cargo build"; exit 1; }
 
 echo "== 1/3 Polly voiceover"
-python3 - <<'PY'
+[ "${SKIP_POLLY:-}" = 1 ] && echo "   skipped (keeping video-assets/audio)" || python3 - <<'PY'
 import json, subprocess
 for n in json.load(open('video-kit/narration-v2.json')):
     subprocess.run(['aws', 'polly', 'synthesize-speech', '--region', 'eu-central-1', '--engine', 'generative',
@@ -32,6 +32,9 @@ for i in $(seq 1 60); do curl -fs $B/health >/dev/null 2>&1 && break; sleep 0.5;
 j(){ python3 -c "import sys,json;print(json.load(sys.stdin)$1)"; }
 J=$(curl -fs $B/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"admin@vibeforge.local","password":"admin12345"}' | j '["token"]')
 H=(-H "authorization: Bearer $J")
+KT=$(curl -s -X POST $B/api/v1/admin/ai/test "${H[@]}" -H 'content-type: application/json' -d '{}')
+if echo "$KT" | grep -q '"ok":true'; then echo "   key check: Muse answered"; else
+  echo "STOP: Muse did not accept the key: $(echo "$KT" | cut -c1-200)"; echo "Check MODEL_API_KEY: paste the real key, not the placeholder."; exit 1; fi
 T=$(curl -fs $B/api/v1/me/tokens "${H[@]}" -H 'content-type: application/json' -d '{"name":"video"}' | j '["token"]')
 curl -fs -X PUT $B/api/v1/me/git "${H[@]}" -H 'content-type: application/json' -d '{"name":"Ada Lovelace","email":"ada@example.com","username":"ada-builds","remote_protocol":""}' >/dev/null
 proj(){ local sp p; sp=$(curl -fs $B/api/v1/spaces "${H[@]}" -H 'content-type: application/json' -d "{\"name\":\"$1\"}" | j '["id"]')
