@@ -80,6 +80,36 @@ ready-to-paste prompt for your AI coding tool, plus one "fix everything" prompt.
 - **Provider:** any OpenAI-compatible `/chat/completions` endpoint
   (Advanced → provider URL; default `https://api.meta.ai/v1`).
 
+## AI assessment (Meta Muse)
+
+Every milestone also has a **✦ Assessment** tab: a custom release-readiness
+report written by Meta Muse for that project. It answers:
+
+- **Who is it for?** Internal (SSO, staff tools), external (customers sign up or pay), public, or mixed.
+- **Web or mobile?** Platforms, and whether it is a native, cross-platform (Expo, Flutter, Capacitor) or installable web app.
+- **How does it ship?** Deploy configs and CI found (Docker, Vercel, Kubernetes, EAS, App Store...) and what is missing.
+- **Is it licensed?** The project's own licence, missing LICENSE files and licence conflicts.
+- **Whose assets are these?** Images, fonts, music, video, icon sets and libraries from someone else, with source,
+  licence and status: OK, check source, needs a paid licence, or no permission (stock comps, paid fonts, brand logos).
+- **Data:** personal data, payments, and whether a privacy policy and terms exist.
+
+The result is a readiness score, a risk level, a profile, a list of possible issues
+(each with a plain fix and a prompt for your AI tool), an asset table and the evidence
+VibeForge checked. **Download report** saves it as Markdown.
+
+- **How it works:** VibeForge first runs its own checks (LICENSE files, store and deploy
+  manifests, media files, stock-library file names, paid font/asset CDNs). Muse gets those
+  facts, the file tree and masked code. Problems the checks can prove (no licence, stock-named
+  media, paid font services, no credits file) are added even if the model misses them.
+- **When:** automatically after each push (Admin → AI review → Assessments), or on demand by
+  Owners and Coders.
+- **Admin search:** Admin → **AI assessments** lists the latest assessment of every project.
+  Every report is indexed (project, space, owner, tags, licence, platforms, deploy targets,
+  issues, assets) for prefix search, with filters for audience, platform, risk, licence,
+  deployment, issue type and flags (paid media, unlicensed assets, personal data, payments, mobile).
+  API: `GET /api/v1/admin/assessments?q=&audience=&platform=&risk=&license=&category=&deployment=&flag=&scope=&sort=`.
+- AI can be wrong and this is not legal advice.
+
 ## Layout
 
 ```
