@@ -9,6 +9,12 @@ any AI tool with the VibeForge skill; browse, fix and fork from the web UI.
 - **Skill:** `skill/SKILL.md` (any SKILL.md-compatible AI tool)
 - **Open standard:** `spec/vibe-artifact-1.0.md` — any client/server can interoperate
 
+## Watch the 3-minute tour
+
+[![VibeForge in 3 minutes: watch on YouTube](https://img.youtube.com/vi/nCESYtEure4/hqdefault.jpg)](https://www.youtube.com/watch?v=nCESYtEure4)
+
+**[▶ Watch on YouTube](https://www.youtube.com/watch?v=nCESYtEure4)**: the problem VibeForge solves, connecting your AI tool over MCP, pushing milestones, the Meta Muse AI review and project assessment, Git setup, and restoring an earlier milestone.
+
 ## Run it (two terminals)
 
 ```bash
