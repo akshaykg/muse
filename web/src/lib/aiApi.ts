@@ -46,6 +46,7 @@ export type AiConfig = {
   max_chars: number;
   reasoning_effort: string;
   auto_preview: boolean;
+  auto_assess: boolean;
   api_key_set: boolean;
   api_key_source: "settings" | "env" | "none";
   api_key_hint: string;

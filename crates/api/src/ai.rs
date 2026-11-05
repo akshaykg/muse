@@ -16,6 +16,8 @@ pub const DEFAULT_BASE_URL: &str = "https://api.meta.ai/v1";
 pub const DEFAULT_MODEL: &str = "muse-spark-1.3";
 const STALE_RUN_MINUTES: i64 = 10;
 
+pub mod assess;
+
 // ------------------------------------------------------------------ store
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +36,8 @@ pub struct AiConfig {
     pub reasoning_effort: String,
     /// Sketch a preview of the app after each push that has no screenshot.
     pub auto_preview: bool,
+    /// Write a release assessment (audience, licences, assets) after each push.
+    pub auto_assess: bool,
 }
 
 impl Default for AiConfig {
@@ -47,6 +51,7 @@ impl Default for AiConfig {
             max_chars: 200_000,
             reasoning_effort: "low".into(),
             auto_preview: true,
+            auto_assess: true,
         }
     }
 }
@@ -100,6 +105,8 @@ pub struct AiStore {
     pub reviews: HashMap<String, AiReview>,
     /// AI-sketched screen previews, by milestone id.
     pub previews: HashMap<String, AiPreview>,
+    /// Release assessments (audience, licences, assets), by milestone id. See assess.rs.
+    pub assessments: HashMap<String, assess::AiAssessment>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -655,8 +662,10 @@ fn mark_stale_preview(p: &mut AiPreview) -> bool {
 /// Called after every push: if the milestone still has no screenshot shortly
 /// after (the skill uploads them right after pushing), let Muse sketch one.
 pub async fn after_push(state: &Shared, milestone_id: &str, user_id: &str) {
-    let on = { let s = state.store.read().await; s.ai.config.enabled && s.ai.config.auto_preview };
-    if !on || resolve_key(state, &state.store.read().await.ai.config).0.is_empty() { return; }
+    let (enabled, auto_preview, auto_assess) = { let s = state.store.read().await; (s.ai.config.enabled, s.ai.config.auto_preview, s.ai.config.auto_assess) };
+    if !enabled || resolve_key(state, &state.store.read().await.ai.config).0.is_empty() { return; }
+    if auto_assess { let _ = assess::begin(state, milestone_id, user_id).await; }
+    if !auto_preview { return; }
     let (state, mid, uid) = (state.clone(), milestone_id.to_string(), user_id.to_string());
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(20)).await;
@@ -701,7 +710,7 @@ fn public_config(state: &Shared, cfg: &AiConfig) -> serde_json::Value {
     serde_json::json!({
         "enabled": cfg.enabled, "base_url": cfg.base_url, "model": cfg.model,
         "redact_secrets": cfg.redact_secrets, "max_chars": cfg.max_chars, "reasoning_effort": cfg.reasoning_effort,
-        "auto_preview": cfg.auto_preview,
+        "auto_preview": cfg.auto_preview, "auto_assess": cfg.auto_assess,
         "api_key_set": !key.is_empty(), "api_key_source": source,
         "api_key_hint": if key.is_empty() { String::new() } else { key_hint(&key) },
     })
@@ -735,6 +744,7 @@ pub struct ConfigBody {
     max_chars: usize,
     #[serde(default)] reasoning_effort: String,
     #[serde(default = "yes")] auto_preview: bool,
+    #[serde(default = "yes")] auto_assess: bool,
 }
 
 fn yes() -> bool { true }
@@ -763,6 +773,7 @@ pub async fn put_config(State(state): State<Shared>, headers: HeaderMap, Json(bo
     cfg.max_chars = body.max_chars;
     cfg.reasoning_effort = body.reasoning_effort.clone();
     cfg.auto_preview = body.auto_preview;
+    cfg.auto_assess = body.auto_assess;
     if body.clear_api_key { cfg.api_key.clear(); }
     if let Some(k) = body.api_key.as_ref().map(|k| k.trim()).filter(|k| !k.is_empty()) {
         cfg.api_key = seal_secret(&state, k);
@@ -912,6 +923,7 @@ pub fn routes() -> Router<Shared> {
         .route("/api/v1/milestones/{id}/ai-review", get(get_review).post(start_review))
         .route("/api/v1/milestones/{id}/ai-review/issues/{issue}/ignore", post(ignore_issue))
         .route("/api/v1/milestones/{id}/ai-preview", get(get_preview).post(start_preview))
+        .merge(assess::routes())
 }
 
 #[cfg(test)]
